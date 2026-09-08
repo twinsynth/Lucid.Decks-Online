@@ -1,0 +1,8 @@
+{
+  "name": "Lucid Decks",
+  "description": "Professional Web MIDI/Web Audio DJ Deck Canvas. Drop audio files and perform live with standard DJ controls and MIDI integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

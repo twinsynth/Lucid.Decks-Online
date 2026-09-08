@@ -1,0 +1,71 @@
+@import "tailwindcss";
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+@layer base {
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+
+  /* Style range inputs explicitly for vertical faders */
+  input[type=range][style*="slider-vertical"] {
+    writing-mode: bt-lr;
+    -webkit-appearance: slider-vertical;
+  }
+}
+
+@layer components {
+  .fader-vertical {
+    -webkit-appearance: none;
+    outline: none;
+  }
+  .fader-vertical::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 24px;
+    height: 48px;
+    background: #111;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: 0 0 15px rgba(255,255,255,0.4);
+  }
+  .fader-vertical.accent-custom::-webkit-slider-thumb {
+    border-color: var(--fader-color);
+    box-shadow: 0 0 25px var(--fader-color), inset 0 0 10px var(--fader-color);
+  }
+  .fader-horizontal {
+    -webkit-appearance: none;
+    outline: none;
+  }
+  .fader-horizontal::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 48px;
+    height: 24px;
+    background: #111;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: 0 0 15px rgba(255,255,255,0.4);
+  }
+}
+
+:root {
+  --bg: #0a0a0c;
+  --ink: #ffffff;
+  --accent: #00f2ff;
+  --ink-faint: rgba(255, 255, 255, 0.05);
+  --neon-glow: 0 0 20px rgba(0, 242, 255, 0.3);
+}
+
