@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Music, Play, Loader2, Download, Plus } from 'lucide-react';
+import { saveTrackToDB } from '../lib/LibraryDB';
 
 interface AILabProps {
   isOpen: boolean;
@@ -49,8 +50,20 @@ export function AILab({ isOpen, onClose, onAddTrack }: AILabProps) {
       const blob = new Blob([bytes], { type: data.mimeType || 'audio/wav' });
       const url = URL.createObjectURL(blob);
       
+      const trackId = `AI_${Date.now()}`;
+      const trackName = `AI_${prompt.slice(0, 24).replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now().toString().slice(-4)}.wav`;
+      const file = new File([blob], trackName, { type: data.mimeType || 'audio/wav' });
+
+      // Automatically persist to IndexedDB
+      try {
+        await saveTrackToDB(file, { id: trackId, name: trackName, source: 'ai' });
+        onAddTrack(file);
+      } catch (dbErr) {
+        console.warn('Failed to auto-save AI track to IndexedDB:', dbErr);
+      }
+
       setTracks(prev => [{
-        id: Date.now().toString(),
+        id: trackId,
         prompt,
         blob,
         url

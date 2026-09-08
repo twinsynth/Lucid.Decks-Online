@@ -1,12 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { 
-  Play, Pause, FastForward, SkipBack, Repeat, 
-  Volume2, Sliders, Music, FileAudio, Settings, Wrench, RefreshCw, ZoomIn, ZoomOut, Move
+  Play, Pause, Repeat, 
+  Music, FileAudio, Wrench, RefreshCw, ZoomIn, Move, Headphones, Volume2, Split, FolderOpen
 } from 'lucide-react';
-import { getAudioEngine } from './lib/AudioEngine';
+import { getAudioEngine, OutputRoutingMode } from './lib/AudioEngine';
 import { initTraktorMIDI, TRAKTOR_S2_MAP, setMidiLearnTarget } from './lib/TraktorMIDI';
+import { updateTrackHotCuesInDB } from './lib/LibraryDB';
 import { MediaBrowser } from './components/MediaBrowser';
 import { AILab } from './components/AILab';
+import { BackgroundVisualizer, BgVisualizerMode } from './components/BackgroundVisualizer';
 
 export const MidiLearnContext = React.createContext<{
   learnMode: boolean;
@@ -14,7 +16,7 @@ export const MidiLearnContext = React.createContext<{
   setActiveTarget: (key: string) => void;
 }>({ learnMode: false, activeTarget: null, setActiveTarget: () => {} });
 
-export function MidiControl({ midiKey, children }: { midiKey: string, children: React.ReactElement }) {
+export function MidiControl({ midiKey, children }: { midiKey: string, children: React.ReactElement, key?: React.Key }) {
   const { learnMode, activeTarget, setActiveTarget } = React.useContext(MidiLearnContext);
   const isActive = activeTarget === midiKey;
 
@@ -63,7 +65,15 @@ export function MidiControl({ midiKey, children }: { midiKey: string, children: 
   });
 }
 
-const WaveformSVG = ({ peaks, color, progress, height = 100, className = '', direction = 'center', thickness = 'solid' }: { peaks: number[], color: string, progress: number, height?: number, className?: string, direction?: 'center'|'up'|'down', thickness?: 'solid'|'thick'|'thin' }) => {
+const HOT_CUE_COLORS = ['#00f2ff', '#10b981', '#f59e0b', '#ff0055'];
+
+const WaveformSVG = ({ 
+  peaks, color, progress, height = 100, className = '', direction = 'center', thickness = 'solid',
+  hotCues = [], duration = 0, onHotCueClick, compact = false
+}: { 
+  peaks: number[], color: string, progress: number, height?: number, className?: string, direction?: 'center'|'up'|'down', thickness?: 'solid'|'thick'|'thin',
+  hotCues?: (number | null)[], duration?: number, onHotCueClick?: (idx: number) => void, compact?: boolean
+}) => {
   const idBase = React.useId().replace(/:/g, '');
   if (peaks.length === 0) return null;
   const width = 1000;
@@ -104,44 +114,76 @@ const WaveformSVG = ({ peaks, color, progress, height = 100, className = '', dir
     });
   }
 
-  // Use unique IDs for clip paths to prevent conflicts
   const clipId = `clip-${idBase}`;
   const clipFutureId = `clip-future-${idBase}`;
-
   const strokeWidth = thickness === 'thick' ? 4 : thickness === 'thin' ? 1.5 : 0;
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className={`w-full h-full ${className}`}>
-      <defs>
-        <clipPath id={clipId}>
-          <rect x="0" y="0" width={`${progress}%`} height="100%" />
-        </clipPath>
-        <clipPath id={clipFutureId}>
-          <rect x={`${progress}%`} y="0" width={`${100 - progress}%`} height="100%" />
-        </clipPath>
-      </defs>
-      {thickness === 'solid' ? (
-        <>
-          <path d={pathD} fill="rgba(255,255,255,0.2)" clipPath={`url(#${clipFutureId})`} />
-          <path d={pathD} fill={color} clipPath={`url(#${clipId})`} style={{ filter: `drop-shadow(0 0 8px ${color})` }} />
-        </>
-      ) : (
-        <>
-          <path d={pathD} fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth={strokeWidth} strokeLinecap="round" clipPath={`url(#${clipFutureId})`} />
-          <path d={pathD} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" clipPath={`url(#${clipId})`} style={{ filter: `drop-shadow(0 0 8px ${color})` }} />
-        </>
-      )}
-    </svg>
+    <div className="relative w-full h-full">
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className={`w-full h-full ${className}`}>
+        <defs>
+          <clipPath id={clipId}>
+            <rect x="0" y="0" width={`${progress}%`} height="100%" />
+          </clipPath>
+          <clipPath id={clipFutureId}>
+            <rect x={`${progress}%`} y="0" width={`${100 - progress}%`} height="100%" />
+          </clipPath>
+        </defs>
+        {thickness === 'solid' ? (
+          <>
+            <path d={pathD} fill="rgba(255,255,255,0.2)" clipPath={`url(#${clipFutureId})`} />
+            <path d={pathD} fill={color} clipPath={`url(#${clipId})`} style={{ filter: `drop-shadow(0 0 8px ${color})` }} />
+          </>
+        ) : (
+          <>
+            <path d={pathD} fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth={strokeWidth} strokeLinecap="round" clipPath={`url(#${clipFutureId})`} />
+            <path d={pathD} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" clipPath={`url(#${clipId})`} style={{ filter: `drop-shadow(0 0 8px ${color})` }} />
+          </>
+        )}
+      </svg>
+
+      {/* Hot Cue Marker Flags on Waveform */}
+      {duration > 0 && hotCues.map((cue, idx) => {
+        if (cue === null || cue === undefined) return null;
+        const pct = Math.min(100, Math.max(0, (cue / duration) * 100));
+        const padColor = HOT_CUE_COLORS[idx];
+        return (
+          <div 
+            key={idx}
+            className="absolute top-0 bottom-0 z-20 pointer-events-auto cursor-pointer group/cue -translate-x-1/2 flex flex-col items-center"
+            style={{ left: `${pct}%` }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onHotCueClick?.(idx);
+            }}
+            title={`Hot Cue ${idx + 1}: ${cue.toFixed(1)}s`}
+          >
+            <div 
+              className={`${compact ? 'text-[7px] px-0.5' : 'text-[8px] px-1'} font-mono font-black rounded-t-sm text-black shadow-md transition-transform group-hover/cue:scale-125 leading-none`}
+              style={{ backgroundColor: padColor, boxShadow: `0 0 8px ${padColor}` }}
+            >
+              {idx + 1}
+            </div>
+            <div className="w-[1.5px] flex-1 opacity-80" style={{ backgroundColor: padColor }} />
+          </div>
+        );
+      })}
+    </div>
   );
 };
 
 const OverlayedWaveforms = ({ 
-  isPlayingA, isPlayingB, fileA, fileB, thickness, colorA, colorB, height
+  isPlayingA, isPlayingB, fileA, fileB, thickness, colorA, colorB, height,
+  hotCuesA, hotCuesB, isCompact = false
 }: { 
-  isPlayingA: boolean, isPlayingB: boolean, fileA: File | null, fileB: File | null, thickness: 'solid'|'thick'|'thin', colorA: string, colorB: string, height: number
+  isPlayingA: boolean, isPlayingB: boolean, fileA: File | null, fileB: File | null, 
+  thickness: 'solid'|'thick'|'thin', colorA: string, colorB: string, height: number,
+  hotCuesA: (number | null)[], hotCuesB: (number | null)[], isCompact?: boolean
 }) => {
   const [progressA, setProgressA] = useState(0);
   const [progressB, setProgressB] = useState(0);
+  const [durA, setDurA] = useState(0);
+  const [durB, setDurB] = useState(0);
   const [peaksA, setPeaksA] = useState<number[]>([]);
   const [peaksB, setPeaksB] = useState<number[]>([]);
   const [activeDeck, setActiveDeck] = useState<'A'|'B'>('A');
@@ -149,14 +191,16 @@ const OverlayedWaveforms = ({
   useEffect(() => {
     const engine = getAudioEngine();
     const interval = setInterval(() => {
-      const durA = engine.deckA.duration;
-      if (durA > 0) setProgressA((engine.deckA.currentTime / durA) * 100);
+      const dA = engine.deckA.duration;
+      setDurA(dA);
+      if (dA > 0) setProgressA((engine.deckA.currentTime / dA) * 100);
       if (engine.deckA.peaks !== peaksA) setPeaksA([...engine.deckA.peaks]);
       
-      const durB = engine.deckB.duration;
-      if (durB > 0) setProgressB((engine.deckB.currentTime / durB) * 100);
+      const dB = engine.deckB.duration;
+      setDurB(dB);
+      if (dB > 0) setProgressB((engine.deckB.currentTime / dB) * 100);
       if (engine.deckB.peaks !== peaksB) setPeaksB([...engine.deckB.peaks]);
-    }, 50);
+    }, 40);
     return () => clearInterval(interval);
   }, [peaksA, peaksB]);
 
@@ -166,36 +210,80 @@ const OverlayedWaveforms = ({
     const rect = e.currentTarget.getBoundingClientRect();
     const pos = (e.clientX - rect.left) / rect.width;
     if (target.duration > 0) {
-        target.audioElement.currentTime = pos * target.duration;
-        if (targetDeck === 'A') setProgressA(pos * 100);
-        else setProgressB(pos * 100);
+      target.seek(pos * target.duration);
+      if (targetDeck === 'A') setProgressA(pos * 100);
+      else setProgressB(pos * 100);
     }
   };
 
   return (
-    <div className="w-full bg-black/80 border-b border-white/10 relative z-40 shadow-lg flex flex-col overflow-hidden group" style={{ height: `${height}px` }}>
-        <div className="absolute inset-0 flex flex-col">
-            {/* Top half seek A */}
-            <div className="w-full h-1/2 z-20 cursor-pointer" onClick={(e) => handleSeek(e, 'A')} onMouseEnter={() => setActiveDeck('A')} />
-            {/* Bottom half seek B */}
-            <div className="w-full h-1/2 z-20 cursor-pointer" onClick={(e) => handleSeek(e, 'B')} onMouseEnter={() => setActiveDeck('B')} />
-        </div>
+    <div 
+      className="w-full bg-black/80 border-b border-white/10 relative z-40 shadow-lg flex flex-col overflow-hidden group transition-[height] duration-300 ease-in-out" 
+      style={{ height: `${height}px` }}
+    >
+      <div className="absolute inset-0 flex flex-col">
+        {/* Top half seek A */}
+        <div className="w-full h-1/2 z-20 cursor-pointer" onClick={(e) => handleSeek(e, 'A')} onMouseEnter={() => setActiveDeck('A')} />
+        {/* Bottom half seek B */}
+        <div className="w-full h-1/2 z-20 cursor-pointer" onClick={(e) => handleSeek(e, 'B')} onMouseEnter={() => setActiveDeck('B')} />
+      </div>
 
-        {/* Waveforms */}
-        <div className="absolute top-0 left-0 right-0 h-1/2">
-            <WaveformSVG peaks={peaksA} color={colorA} progress={progressA} direction="up" thickness={thickness} />
-        </div>
-        <div className="absolute bottom-0 left-0 right-0 h-1/2 border-t border-white/10">
-            <WaveformSVG peaks={peaksB} color={colorB} progress={progressB} direction="down" thickness={thickness} />
-        </div>
+      {/* Waveforms */}
+      <div className="absolute top-0 left-0 right-0 h-1/2">
+        <WaveformSVG 
+          peaks={peaksA} 
+          color={colorA} 
+          progress={progressA} 
+          direction="up" 
+          thickness={thickness} 
+          hotCues={hotCuesA}
+          duration={durA}
+          onHotCueClick={(idx) => getAudioEngine().deckA.jumpToHotCue(idx)}
+          compact={isCompact}
+        />
+      </div>
+      <div className="absolute bottom-0 left-0 right-0 h-1/2 border-t border-white/10">
+        <WaveformSVG 
+          peaks={peaksB} 
+          color={colorB} 
+          progress={progressB} 
+          direction="down" 
+          thickness={thickness} 
+          hotCues={hotCuesB}
+          duration={durB}
+          onHotCueClick={(idx) => getAudioEngine().deckB.jumpToHotCue(idx)}
+          compact={isCompact}
+        />
+      </div>
 
-        {/* Playheads */}
-        <div className="absolute top-0 bottom-0 w-[2px] z-10 pointer-events-none" style={{ left: `${progressA}%`, backgroundColor: colorA, boxShadow: `0 0 10px ${colorA}` }} />
-        <div className="absolute top-0 bottom-0 w-[2px] z-10 pointer-events-none" style={{ left: `${progressB}%`, backgroundColor: colorB, boxShadow: `0 0 10px ${colorB}` }} />
+      {/* Playheads */}
+      <div className="absolute top-0 bottom-0 w-[2px] z-10 pointer-events-none" style={{ left: `${progressA}%`, backgroundColor: colorA, boxShadow: `0 0 10px ${colorA}` }} />
+      <div className="absolute top-0 bottom-0 w-[2px] z-10 pointer-events-none" style={{ left: `${progressB}%`, backgroundColor: colorB, boxShadow: `0 0 10px ${colorB}` }} />
 
-        {/* Labels */}
-        <div className="absolute top-1 left-2 text-[10px] font-mono font-bold z-30 transition-opacity" style={{ color: colorA, opacity: activeDeck === 'A' ? 1 : 0.5 }}>DECK A {fileA ? `- ${fileA.name}` : ''}</div>
-        <div className="absolute bottom-1 left-2 text-[10px] font-mono font-bold z-30 transition-opacity" style={{ color: colorB, opacity: activeDeck === 'B' ? 1 : 0.5 }}>DECK B {fileB ? `- ${fileB.name}` : ''}</div>
+      {/* Labels */}
+      <div 
+        className={`absolute left-2 z-30 font-mono font-bold transition-all truncate max-w-[45%] pointer-events-none ${
+          isCompact ? 'top-0.5 text-[8px] leading-tight' : 'top-1 text-[10px]'
+        }`} 
+        style={{ color: colorA, opacity: activeDeck === 'A' ? 1 : 0.6 }}
+      >
+        DECK A {fileA ? `• ${fileA.name}` : ''}
+      </div>
+      <div 
+        className={`absolute left-2 z-30 font-mono font-bold transition-all truncate max-w-[45%] pointer-events-none ${
+          isCompact ? 'bottom-0.5 text-[8px] leading-tight' : 'bottom-1 text-[10px]'
+        }`} 
+        style={{ color: colorB, opacity: activeDeck === 'B' ? 1 : 0.6 }}
+      >
+        DECK B {fileB ? `• ${fileB.name}` : ''}
+      </div>
+
+      {/* Dual Phase Strip indicator in compact mode */}
+      {isCompact && (
+        <div className="absolute top-1/2 -translate-y-1/2 right-3 text-[8px] font-mono text-white/30 tracking-widest pointer-events-none hidden sm:block uppercase select-none">
+          Dual Phase Strip
+        </div>
+      )}
     </div>
   );
 };
@@ -203,13 +291,55 @@ const OverlayedWaveforms = ({
 export default function App() {
   const [midiLearnMode, setMidiLearnMode] = useState(false);
   const [activeMidiTarget, setActiveMidiTarget] = useState<string | null>(null);
-  const [midiUpdateCount, setMidiUpdateCount] = useState(0);
+  const [, setMidiUpdateCount] = useState(0);
   
   const [libraryVisible, setLibraryVisible] = useState(true);
   const [waveformThickness, setWaveformThickness] = useState<'solid'|'thick'|'thin'>('solid');
   const [deckAColor, setDeckAColor] = useState('#00f2ff');
   const [deckBColor, setDeckBColor] = useState('#ff0055');
   const [waveformHeight, setWaveformHeight] = useState(112);
+
+  // Top waveform visualizer sacrifices height when folder drawer is open to protect deck space
+  const compactWaveformHeight = Math.min(48, Math.max(40, Math.round(waveformHeight * 0.43)));
+  const effectiveWaveformHeight = libraryVisible ? compactWaveformHeight : waveformHeight;
+
+  const [midiEnabled, setMidiEnabled] = useState(false);
+  const [midiStatus, setMidiStatus] = useState<string>('Unchecked');
+  const [deckAFile, setDeckAFile] = useState<File | null>(null);
+  const [deckBFile, setDeckBFile] = useState<File | null>(null);
+
+  // Deck Transport & Performance State
+  const [deckAPlay, setDeckAPlay] = useState(false);
+  const [deckBPlay, setDeckBPlay] = useState(false);
+  const [deckALoop, setDeckALoop] = useState(false);
+  const [deckBLoop, setDeckBLoop] = useState(false);
+  const [deckAKeylock, setDeckAKeylock] = useState(false);
+  const [deckBKeylock, setDeckBKeylock] = useState(false);
+  const [deckAHotCues, setDeckAHotCues] = useState<(number | null)[]>([null, null, null, null]);
+  const [deckBHotCues, setDeckBHotCues] = useState<(number | null)[]>([null, null, null, null]);
+  
+  // Mixer & Headphone PFL State
+  const [crossfader, setCrossfader] = useState(0.5);
+  const [masterVol, setMasterVol] = useState(0.8);
+  const [deckAVol, setDeckAVol] = useState(0.8);
+  const [deckBVol, setDeckBVol] = useState(0.8);
+  const [cueAActive, setCueAActive] = useState(false);
+  const [cueBActive, setCueBActive] = useState(false);
+  const [cueVol, setCueVol] = useState(0.8);
+  const [cueMix, setCueMix] = useState(0.0);
+  const [outputMode, setOutputMode] = useState<OutputRoutingMode>('stereo-sum');
+
+  const fileInputARef = useRef<HTMLInputElement>(null);
+  const fileInputBRef = useRef<HTMLInputElement>(null);
+
+  // Tools / Settings State
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [aiLabOpen, setAiLabOpen] = useState(false);
+  const [scale, setScale] = useState(1);
+  const [rotation, setRotation] = useState(0);
+  const [translateX, setTranslateX] = useState(0);
+  const [translateY, setTranslateY] = useState(0);
+  const [bgVisMode, setBgVisMode] = useState<BgVisualizerMode>('aura');
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -232,43 +362,12 @@ export default function App() {
     return () => window.removeEventListener('dj-midi-learned', handleLearned);
   }, []);
 
-  const [midiEnabled, setMidiEnabled] = useState(false);
-  const [midiStatus, setMidiStatus] = useState<string>('Unchecked');
-  const [deckAFile, setDeckAFile] = useState<File | null>(null);
-  const [deckBFile, setDeckBFile] = useState<File | null>(null);
-
-  // Deck State
-  const [deckAPlay, setDeckAPlay] = useState(false);
-  const [deckBPlay, setDeckBPlay] = useState(false);
-  const [deckALoop, setDeckALoop] = useState(false);
-  const [deckBLoop, setDeckBLoop] = useState(false);
-  
-  // Mixer State
-  const [crossfader, setCrossfader] = useState(0.5);
-  const [masterVol, setMasterVol] = useState(0.8);
-  
-  const [deckAVol, setDeckAVol] = useState(0.8);
-  const [deckBVol, setDeckBVol] = useState(0.8);
-
-  const fileInputARef = useRef<HTMLInputElement>(null);
-  const fileInputBRef = useRef<HTMLInputElement>(null);
-
-  // Tools / Customizer State
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [aiLabOpen, setAiLabOpen] = useState(false);
-  const [scale, setScale] = useState(1);
-  const [rotation, setRotation] = useState(0);
-  const [translateX, setTranslateX] = useState(0);
-  const [translateY, setTranslateY] = useState(0);
-
   useEffect(() => {
-    // Start Audio Engine on first interaction to comply with browser policies
     const resumeAudio = () => {
       getAudioEngine().resume();
       window.removeEventListener('click', resumeAudio);
     };
     window.addEventListener('click', resumeAudio);
-
     return () => window.removeEventListener('click', resumeAudio);
   }, []);
 
@@ -305,38 +404,124 @@ export default function App() {
       if (controlName === 'MASTER_VOLUME') setMasterVol(normalized);
       if (controlName === 'DECK_A_VOLUME') setDeckAVol(normalized);
       if (controlName === 'DECK_B_VOLUME') setDeckBVol(normalized);
-      // Buttons
+      if (controlName === 'HEADPHONE_VOLUME') setCueVol(normalized);
+      if (controlName === 'CUE_MIX') setCueMix(normalized);
+
       const engine = getAudioEngine();
       setDeckAPlay(engine.deckA.isPlaying);
       setDeckBPlay(engine.deckB.isPlaying);
       setDeckALoop(engine.deckA.loopEnabled);
       setDeckBLoop(engine.deckB.loopEnabled);
+      setDeckAKeylock(engine.deckA.keylock);
+      setDeckBKeylock(engine.deckB.keylock);
+      setCueAActive(engine.deckA.isCueActive);
+      setCueBActive(engine.deckB.isCueActive);
+      setDeckAHotCues([...engine.deckA.hotCues]);
+      setDeckBHotCues([...engine.deckB.hotCues]);
     };
     window.addEventListener('dj-control', handleMidiUpdate);
     return () => window.removeEventListener('dj-control', handleMidiUpdate);
   }, []);
 
-  // Poll for transport status (since Audio API fires async)
+  // Poll for transport status
   useEffect(() => {
     const interval = setInterval(() => {
       const engine = getAudioEngine();
       if (deckAPlay !== engine.deckA.isPlaying) setDeckAPlay(engine.deckA.isPlaying);
       if (deckBPlay !== engine.deckB.isPlaying) setDeckBPlay(engine.deckB.isPlaying);
-    }, 100);
+      if (deckALoop !== engine.deckA.loopEnabled) setDeckALoop(engine.deckA.loopEnabled);
+      if (deckBLoop !== engine.deckB.loopEnabled) setDeckBLoop(engine.deckB.loopEnabled);
+      if (deckAKeylock !== engine.deckA.keylock) setDeckAKeylock(engine.deckA.keylock);
+      if (deckBKeylock !== engine.deckB.keylock) setDeckBKeylock(engine.deckB.keylock);
+      if (cueAActive !== engine.deckA.isCueActive) setCueAActive(engine.deckA.isCueActive);
+      if (cueBActive !== engine.deckB.isCueActive) setCueBActive(engine.deckB.isCueActive);
+    }, 60);
     return () => clearInterval(interval);
-  }, [deckAPlay, deckBPlay]);
+  }, [deckAPlay, deckBPlay, deckALoop, deckBLoop, deckAKeylock, deckBKeylock, cueAActive, cueBActive]);
 
-  const handleLoadDeck = async (deck: 'A' | 'B', file: File) => {
+  const handleLoadDeck = async (deck: 'A' | 'B', file: File, trackId?: string, hotCues?: (number | null)[]) => {
     const engine = getAudioEngine();
     if (deck === 'A') {
       setDeckAFile(file);
-      await engine.deckA.load(file);
+      await engine.deckA.load(file, trackId, hotCues);
       engine.deckA.setVolume(deckAVol);
+      setDeckAHotCues([...engine.deckA.hotCues]);
+      setDeckAKeylock(engine.deckA.keylock);
     } else {
       setDeckBFile(file);
-      await engine.deckB.load(file);
+      await engine.deckB.load(file, trackId, hotCues);
       engine.deckB.setVolume(deckBVol);
+      setDeckBHotCues([...engine.deckB.hotCues]);
+      setDeckBKeylock(engine.deckB.keylock);
     }
+  };
+
+  const togglePlay = (deck: 'A' | 'B') => {
+    const engine = getAudioEngine();
+    engine.resume();
+    const target = deck === 'A' ? engine.deckA : engine.deckB;
+    if (target.isPlaying) target.pause();
+    else target.play();
+  };
+
+  const toggleCue = (deck: 'A' | 'B') => {
+    const engine = getAudioEngine();
+    engine.resume();
+    const target = deck === 'A' ? engine.deckA : engine.deckB;
+    if (!target.isPlaying) target.setCuePoint();
+    else target.jumpToCue();
+  };
+
+  const toggleLoop = (deck: 'A' | 'B') => {
+    const engine = getAudioEngine();
+    const target = deck === 'A' ? engine.deckA : engine.deckB;
+    target.toggleLoop();
+    if (deck === 'A') setDeckALoop(target.loopEnabled);
+    else setDeckBLoop(target.loopEnabled);
+  };
+
+  const toggleKeylock = (deck: 'A' | 'B') => {
+    const engine = getAudioEngine();
+    const target = deck === 'A' ? engine.deckA : engine.deckB;
+    target.setKeylock(!target.keylock);
+    if (deck === 'A') setDeckAKeylock(target.keylock);
+    else setDeckBKeylock(target.keylock);
+  };
+
+  const togglePflCue = (deck: 'A' | 'B') => {
+    const engine = getAudioEngine();
+    if (deck === 'A') {
+      engine.toggleCueA();
+      setCueAActive(engine.deckA.isCueActive);
+    } else {
+      engine.toggleCueB();
+      setCueBActive(engine.deckB.isCueActive);
+    }
+  };
+
+  const handleHotCueClick = (deck: 'A' | 'B', index: number, isDelMode: boolean) => {
+    const engine = getAudioEngine();
+    const target = deck === 'A' ? engine.deckA : engine.deckB;
+
+    if (isDelMode) {
+      target.clearHotCue(index);
+    } else {
+      target.jumpToHotCue(index);
+    }
+
+    const updated = [...target.hotCues];
+    if (deck === 'A') setDeckAHotCues(updated);
+    else setDeckBHotCues(updated);
+
+    // Save to IndexedDB if track has an ID
+    if (target.trackId) {
+      updateTrackHotCuesInDB(target.trackId, updated);
+    }
+  };
+
+  const handleRoutingModeChange = (mode: OutputRoutingMode) => {
+    setOutputMode(mode);
+    getAudioEngine().setupOutputRouting(mode);
   };
 
   const handleExportMidi = () => {
@@ -367,28 +552,6 @@ export default function App() {
     }
   };
 
-  const togglePlay = (deck: 'A' | 'B') => {
-    const engine = getAudioEngine();
-    const target = deck === 'A' ? engine.deckA : engine.deckB;
-    if (target.isPlaying) target.pause();
-    else target.play();
-  };
-
-  const toggleCue = (deck: 'A' | 'B') => {
-    const engine = getAudioEngine();
-    const target = deck === 'A' ? engine.deckA : engine.deckB;
-    if (!target.isPlaying) target.setCuePoint();
-    else target.jumpToCue();
-  };
-
-  const toggleLoop = (deck: 'A' | 'B') => {
-    const engine = getAudioEngine();
-    const target = deck === 'A' ? engine.deckA : engine.deckB;
-    target.toggleLoop();
-    if (deck === 'A') setDeckALoop(target.loopEnabled);
-    else setDeckBLoop(target.loopEnabled);
-  };
-
   const resetCustomizer = () => {
     setScale(1);
     setRotation(0);
@@ -402,9 +565,24 @@ export default function App() {
       <header className="h-14 border-b border-white/10 bg-black/40 flex items-center justify-between px-6 shrink-0 relative z-50">
         <div className="flex items-center gap-3">
           <Music className="w-5 h-5 text-white/50" />
-          <h1 className="font-bold tracking-widest text-sm uppercase"><span className="text-[#00f2ff]">LUCID</span> <span className="text-[#ff0055]">DECKS</span></h1>
+          <h1 className="font-bold tracking-widest text-sm uppercase">
+            <span className="text-[#00f2ff]">LUCID</span> <span className="text-[#ff0055]">DECKS</span>
+          </h1>
         </div>
+
         <div className="flex items-center gap-3">
+          {/* Output Mode Indicator Badge */}
+          <div 
+            onClick={() => setToolsOpen(true)}
+            className="flex items-center gap-1.5 text-[10px] font-mono px-2.5 py-1 rounded bg-white/5 border border-white/10 hover:border-white/30 cursor-pointer transition-colors"
+            title="Click to configure audio output in Settings"
+          >
+            <Headphones className="w-3 h-3 text-amber-400" />
+            <span className="text-white/60 uppercase">
+              {outputMode === 'split-lr' ? 'SPLIT L/R' : outputMode === '4-channel' ? '4-CH AUDIO' : 'STEREO'}
+            </span>
+          </div>
+
           <label className="flex items-center gap-2 text-xs font-mono cursor-pointer border border-white/20 px-3 py-1.5 rounded transition-colors hover:bg-white/10">
             <input 
               type="checkbox" 
@@ -434,6 +612,19 @@ export default function App() {
 
           <div className="relative ml-4 flex gap-4">
             <button 
+              onClick={() => setLibraryVisible(!libraryVisible)}
+              className={`flex items-center gap-1.5 text-xs font-mono uppercase px-3 py-1.5 rounded border transition-colors ${
+                libraryVisible 
+                  ? 'bg-[#00f2ff]/20 border-[#00f2ff] text-[#00f2ff]' 
+                  : 'border-white/20 hover:border-white/50 text-white/70 hover:text-white'
+              }`}
+              title="Toggle Library Drawer (Space)"
+            >
+              <FolderOpen className="w-4 h-4" />
+              <span>Library</span>
+              <span className="text-[9px] opacity-40 font-mono hidden lg:inline">[Space]</span>
+            </button>
+            <button 
               onClick={() => setAiLabOpen(!aiLabOpen)}
               className={`flex items-center gap-2 text-xs font-mono uppercase px-3 py-1.5 rounded border transition-colors ${aiLabOpen ? 'bg-[#00f2ff]/20 border-[#00f2ff] text-[#00f2ff]' : 'border-white/20 hover:border-[#00f2ff]/50 text-[#00f2ff]/70 hover:text-[#00f2ff]'}`}
             >
@@ -447,137 +638,224 @@ export default function App() {
               <Wrench className="w-4 h-4" />
               Settings
             </button>
+
+            {/* Settings Modal */}
             {toolsOpen && (
-            <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-8 backdrop-blur-sm">
-              <div className="bg-[#1a1a20] border border-white/10 rounded-2xl p-8 max-w-5xl w-full max-h-full overflow-y-auto shadow-2xl flex flex-col gap-8 relative">
-                <button onClick={() => setToolsOpen(false)} className="absolute top-4 right-4 text-white/50 hover:text-white text-xl">
-                  ✕
-                </button>
-                <h2 className="text-xl font-bold tracking-widest border-b border-white/10 pb-4">SETTINGS</h2>
-                               <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
-                   {/* Column 1 */}
-                   <div className="flex flex-col gap-8">
-                       <div>
-                           <h3 className="text-xs font-bold tracking-widest text-white/50 mb-4 uppercase">Waveforms</h3>
-                           <div className="flex flex-col gap-4">
-                               <div className="flex flex-col gap-2">
-                                   <label className="text-xs font-mono">Waveform Density</label>
-                                   <div className="flex gap-2">
-                                     <button onClick={() => setWaveformThickness('solid')} className={`flex-1 text-[10px] tracking-wider uppercase py-2 px-2 border rounded transition-colors ${waveformThickness === 'solid' ? 'bg-white/20 border-white text-white' : 'border-white/10 text-white/50 hover:text-white'}`}>Solid (Heavy)</button>
-                                     <button onClick={() => setWaveformThickness('thick')} className={`flex-1 text-[10px] tracking-wider uppercase py-2 px-2 border rounded transition-colors ${waveformThickness === 'thick' ? 'bg-white/20 border-white text-white' : 'border-white/10 text-white/50 hover:text-white'}`}>Bars (Medium)</button>
-                                     <button onClick={() => setWaveformThickness('thin')} className={`flex-1 text-[10px] tracking-wider uppercase py-2 px-2 border rounded transition-colors ${waveformThickness === 'thin' ? 'bg-white/20 border-white text-white' : 'border-white/10 text-white/50 hover:text-white'}`}>Lines (Thin)</button>
-                                   </div>
-                               </div>
-                               <div className="flex flex-col gap-2">
-                                   <label className="text-xs font-mono">Global Waveform Height: {waveformHeight}px</label>
-                                   <input type="range" min="56" max="300" step="1" value={waveformHeight} onChange={(e) => setWaveformHeight(parseInt(e.target.value))} className="w-full accent-white" />
-                               </div>
-                           </div>
-                       </div>
-                       
-                       <div>
-                           <h3 className="text-xs font-bold tracking-widest text-white/50 mb-4 uppercase">Colors</h3>
-                           <div className="flex flex-col gap-4">
-                               <div className="flex items-center justify-between">
-                                   <label className="text-xs font-mono" style={{ color: deckAColor }}>Deck A Theme</label>
-                                   <input type="color" value={deckAColor} onChange={(e) => setDeckAColor(e.target.value)} className="w-12 h-8 bg-transparent border-0 cursor-pointer" />
-                               </div>
-                               <div className="flex items-center justify-between">
-                                   <label className="text-xs font-mono" style={{ color: deckBColor }}>Deck B Theme</label>
-                                   <input type="color" value={deckBColor} onChange={(e) => setDeckBColor(e.target.value)} className="w-12 h-8 bg-transparent border-0 cursor-pointer" />
-                               </div>
-                               <button onClick={() => { setDeckAColor('#00f2ff'); setDeckBColor('#ff0055'); }} className="text-[10px] tracking-wider uppercase py-2 bg-white/5 hover:bg-white/10 rounded border border-white/10 transition-colors">Reset Colors</button>
-                           </div>
-                       </div>
-                   </div>
+              <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-8 backdrop-blur-md">
+                <div className="bg-[#1a1a20] border border-white/10 rounded-2xl p-8 max-w-5xl w-full max-h-full overflow-y-auto shadow-2xl flex flex-col gap-8 relative">
+                  <button onClick={() => setToolsOpen(false)} className="absolute top-4 right-4 text-white/50 hover:text-white text-xl">
+                    ✕
+                  </button>
+                  <h2 className="text-xl font-bold tracking-widest border-b border-white/10 pb-4">SETTINGS</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
+                    
+                    {/* Column 1: Audio Output & Routing */}
+                    <div className="flex flex-col gap-8">
+                      <div>
+                        <h3 className="text-xs font-bold tracking-widest text-[#00f2ff] mb-4 uppercase flex items-center gap-2">
+                          <Headphones className="w-4 h-4" /> Audio Output Routing (PFL)
+                        </h3>
+                        <div className="flex flex-col gap-3">
+                          <div className="text-[10px] font-mono opacity-60 bg-black/40 border border-white/5 p-2.5 rounded-lg">
+                            Hardware: {getAudioEngine().maxChannels} Output Channels Detected
+                          </div>
+                          
+                          <div className="flex flex-col gap-2">
+                            <button 
+                              onClick={() => handleRoutingModeChange('stereo-sum')}
+                              className={`text-left text-[11px] p-2.5 rounded-lg border transition-all ${outputMode === 'stereo-sum' ? 'bg-[#00f2ff]/20 border-[#00f2ff] text-white font-bold shadow-[0_0_10px_rgba(0,242,255,0.2)]' : 'border-white/10 text-white/50 hover:text-white bg-black/20'}`}
+                            >
+                              <div className="font-bold">Stereo Sum / Preview</div>
+                              <div className="text-[9px] opacity-60 font-mono mt-0.5">Master and Cue previewed together (Laptop speakers/headphones)</div>
+                            </button>
+                            
+                            <button 
+                              onClick={() => handleRoutingModeChange('split-lr')}
+                              className={`text-left text-[11px] p-2.5 rounded-lg border transition-all ${outputMode === 'split-lr' ? 'bg-amber-400/20 border-amber-400 text-white font-bold shadow-[0_0_10px_rgba(251,191,36,0.2)]' : 'border-white/10 text-white/50 hover:text-white bg-black/20'}`}
+                            >
+                              <div className="font-bold flex items-center gap-1.5">
+                                <Split className="w-3 h-3 text-amber-400" /> Split Stereo Cable (L/R)
+                              </div>
+                              <div className="text-[9px] opacity-60 font-mono mt-0.5">Left = Master (Speakers) | Right = Cue (Headphones)</div>
+                            </button>
+                            
+                            <button 
+                              onClick={() => handleRoutingModeChange('4-channel')}
+                              disabled={getAudioEngine().maxChannels < 4}
+                              className={`text-left text-[11px] p-2.5 rounded-lg border transition-all ${outputMode === '4-channel' ? 'bg-emerald-400/20 border-emerald-400 text-white font-bold shadow-[0_0_10px_rgba(16,185,129,0.2)]' : 'border-white/10 text-white/50 hover:text-white bg-black/20 disabled:opacity-40'}`}
+                            >
+                              <div className="font-bold">4-Channel DJ Soundcard</div>
+                              <div className="text-[9px] opacity-60 font-mono mt-0.5">
+                                {getAudioEngine().maxChannels >= 4 
+                                  ? 'Ch 1-2: Master Out | Ch 3-4: Headphone Cue' 
+                                  : 'Requires 4-channel DJ soundcard/interface'}
+                              </div>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
 
-                   {/* Column 2 */}
-                   <div className="flex flex-col gap-8">
-                       <div>
-                           <h3 className="text-xs font-bold tracking-widest text-white/50 mb-4 uppercase">Customise View</h3>
-                            <div className="flex flex-col gap-4">
-                              <div className="flex items-center gap-4 text-xs font-mono">
-                                <ZoomIn className="w-4 h-4 opacity-50 shrink-0" /> <span className="w-24">Scale: {scale.toFixed(2)}x</span>
-                                <input type="range" min="0.5" max="1.5" step="0.05" value={scale} onChange={(e) => setScale(parseFloat(e.target.value))} className="flex-1 accent-white" />
-                              </div>
-                              <div className="flex items-center gap-4 text-xs font-mono">
-                                <RefreshCw className="w-4 h-4 opacity-50 shrink-0" /> <span className="w-24">Rotate: {rotation}°</span>
-                                <input type="range" min="-45" max="45" step="1" value={rotation} onChange={(e) => setRotation(parseFloat(e.target.value))} className="flex-1 accent-white" />
-                              </div>
-                              <div className="flex items-center gap-4 text-xs font-mono">
-                                <Move className="w-4 h-4 opacity-50 shrink-0" /> <span className="w-24">Pan X: {translateX}px</span>
-                                <input type="range" min="-300" max="300" step="1" value={translateX} onChange={(e) => setTranslateX(parseFloat(e.target.value))} className="flex-1 accent-white" />
-                              </div>
-                              <div className="flex items-center gap-4 text-xs font-mono">
-                                <Move className="w-4 h-4 opacity-50 shrink-0" /> <span className="w-24">Pan Y: {translateY}px</span>
-                                <input type="range" min="-300" max="300" step="1" value={translateY} onChange={(e) => setTranslateY(parseFloat(e.target.value))} className="flex-1 accent-white" />
-                              </div>
-                              <button onClick={resetCustomizer} className="w-full text-[10px] tracking-wider uppercase py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded transition-colors">
-                                Reset View
-                              </button>
+                      <div>
+                        <h3 className="text-xs font-bold tracking-widest text-white/50 mb-4 uppercase">Waveforms</h3>
+                        <div className="flex flex-col gap-4">
+                          <div className="flex flex-col gap-2">
+                            <label className="text-xs font-mono">Waveform Density</label>
+                            <div className="flex gap-2">
+                              <button onClick={() => setWaveformThickness('solid')} className={`flex-1 text-[10px] tracking-wider uppercase py-2 px-2 border rounded transition-colors ${waveformThickness === 'solid' ? 'bg-white/20 border-white text-white' : 'border-white/10 text-white/50 hover:text-white'}`}>Solid</button>
+                              <button onClick={() => setWaveformThickness('thick')} className={`flex-1 text-[10px] tracking-wider uppercase py-2 px-2 border rounded transition-colors ${waveformThickness === 'thick' ? 'bg-white/20 border-white text-white' : 'border-white/10 text-white/50 hover:text-white'}`}>Bars</button>
+                              <button onClick={() => setWaveformThickness('thin')} className={`flex-1 text-[10px] tracking-wider uppercase py-2 px-2 border rounded transition-colors ${waveformThickness === 'thin' ? 'bg-white/20 border-white text-white' : 'border-white/10 text-white/50 hover:text-white'}`}>Lines</button>
                             </div>
-                       </div>
-                       <div>
-                           <h3 className="text-xs font-bold tracking-widest text-white/50 mb-4 uppercase">MIDI Control</h3>
-                            <div className="flex flex-col gap-4">
-                              <div className="text-[10px] font-mono opacity-50 bg-white/5 p-2 rounded">Status: {midiStatus}</div>
-                              <button 
-                                onClick={checkMidiDevices}
-                                className="w-full text-[10px] tracking-wider uppercase py-2 border border-white/20 hover:border-white hover:text-white rounded transition-colors"
-                              >
-                                Check Devices
-                              </button>
-                            </div>
-                       </div>
-                   </div>
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <label className="text-xs font-mono">Global Waveform Height: {waveformHeight}px</label>
+                            <input type="range" min="56" max="300" step="1" value={waveformHeight} onChange={(e) => setWaveformHeight(parseInt(e.target.value))} className="w-full accent-white" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
 
-                   {/* Column 3: MIDI Mapping DB */}
-                   <div className="flex flex-col gap-4 h-[500px]">
-                       <h3 className="text-xs font-bold tracking-widest text-white/50 uppercase">MIDI Database</h3>
-                       <div className="flex-1 bg-black/20 border border-white/10 rounded overflow-y-auto p-2">
-                           {Object.entries(TRAKTOR_S2_MAP).map(([key, value]) => (
-                               <div key={key} className="flex justify-between items-center py-1 border-b border-white/5 last:border-0">
-                                   <span className="text-[10px] font-mono opacity-80 truncate mr-2" title={key}>{key}</span>
-                                   <span className="text-[10px] font-mono font-bold bg-white/10 px-1 rounded shrink-0">
-                                       {typeof value === 'number' ? `0x${value.toString(16).toUpperCase()}` : value}
-                                   </span>
-                               </div>
-                           ))}
-                       </div>
-                       <div className="flex gap-2 shrink-0">
-                           <button 
-                             onClick={handleExportMidi}
-                             className="flex-1 text-[10px] tracking-wider uppercase py-2 border border-white/20 hover:border-white text-white rounded transition-colors"
-                           >
-                               Export
-                           </button>
-                           <label className="flex-1 text-[10px] tracking-wider uppercase py-2 border border-white/20 hover:border-white text-white rounded transition-colors text-center cursor-pointer">
-                               Import
-                               <input type="file" className="hidden" accept=".json" onChange={handleImportMidi} onClick={(e) => { (e.target as HTMLInputElement).value = ''; }} />
-                           </label>
-                       </div>
-                   </div>
+                    {/* Column 2: Customise View & Colors */}
+                    <div className="flex flex-col gap-8">
+                      <div>
+                        <h3 className="text-xs font-bold tracking-widest text-white/50 mb-4 uppercase">Customise View</h3>
+                        <div className="flex flex-col gap-4">
+                          <div className="flex items-center gap-4 text-xs font-mono">
+                            <ZoomIn className="w-4 h-4 opacity-50 shrink-0" /> <span className="w-24">Scale: {scale.toFixed(2)}x</span>
+                            <input type="range" min="0.5" max="1.5" step="0.05" value={scale} onChange={(e) => setScale(parseFloat(e.target.value))} className="flex-1 accent-white" />
+                          </div>
+                          <div className="flex items-center gap-4 text-xs font-mono">
+                            <RefreshCw className="w-4 h-4 opacity-50 shrink-0" /> <span className="w-24">Rotate: {rotation}°</span>
+                            <input type="range" min="-45" max="45" step="1" value={rotation} onChange={(e) => setRotation(parseFloat(e.target.value))} className="flex-1 accent-white" />
+                          </div>
+                          <div className="flex items-center gap-4 text-xs font-mono">
+                            <Move className="w-4 h-4 opacity-50 shrink-0" /> <span className="w-24">Pan X: {translateX}px</span>
+                            <input type="range" min="-300" max="300" step="1" value={translateX} onChange={(e) => setTranslateX(parseFloat(e.target.value))} className="flex-1 accent-white" />
+                          </div>
+                          <div className="flex items-center gap-4 text-xs font-mono">
+                            <Move className="w-4 h-4 opacity-50 shrink-0" /> <span className="w-24">Pan Y: {translateY}px</span>
+                            <input type="range" min="-300" max="300" step="1" value={translateY} onChange={(e) => setTranslateY(parseFloat(e.target.value))} className="flex-1 accent-white" />
+                          </div>
+                          <button onClick={resetCustomizer} className="w-full text-[10px] tracking-wider uppercase py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded transition-colors">
+                            Reset View
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <h3 className="text-xs font-bold tracking-widest text-white/50 mb-4 uppercase">Colors</h3>
+                        <div className="flex flex-col gap-4">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-mono" style={{ color: deckAColor }}>Deck A Theme</label>
+                            <input type="color" value={deckAColor} onChange={(e) => setDeckAColor(e.target.value)} className="w-12 h-8 bg-transparent border-0 cursor-pointer" />
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-mono" style={{ color: deckBColor }}>Deck B Theme</label>
+                            <input type="color" value={deckBColor} onChange={(e) => setDeckBColor(e.target.value)} className="w-12 h-8 bg-transparent border-0 cursor-pointer" />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <h3 className="text-xs font-bold tracking-widest text-[#00f2ff] mb-3 uppercase flex items-center gap-2">
+                          <Music className="w-4 h-4" /> Background Visualizer
+                        </h3>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button 
+                            onClick={() => setBgVisMode('aura')} 
+                            className={`text-[10px] tracking-wider uppercase py-2 px-2 border rounded transition-all ${bgVisMode === 'aura' ? 'bg-[#00f2ff]/20 border-[#00f2ff] text-white font-bold shadow-[0_0_10px_rgba(0,242,255,0.3)]' : 'border-white/10 text-white/50 hover:text-white bg-black/20'}`}
+                          >
+                            Ambient Aura
+                          </button>
+                          <button 
+                            onClick={() => setBgVisMode('horizon')} 
+                            className={`text-[10px] tracking-wider uppercase py-2 px-2 border rounded transition-all ${bgVisMode === 'horizon' ? 'bg-[#00f2ff]/20 border-[#00f2ff] text-white font-bold shadow-[0_0_10px_rgba(0,242,255,0.3)]' : 'border-white/10 text-white/50 hover:text-white bg-black/20'}`}
+                          >
+                            Horizon Wave
+                          </button>
+                          <button 
+                            onClick={() => setBgVisMode('rings')} 
+                            className={`text-[10px] tracking-wider uppercase py-2 px-2 border rounded transition-all ${bgVisMode === 'rings' ? 'bg-[#00f2ff]/20 border-[#00f2ff] text-white font-bold shadow-[0_0_10px_rgba(0,242,255,0.3)]' : 'border-white/10 text-white/50 hover:text-white bg-black/20'}`}
+                          >
+                            Soundwave Rings
+                          </button>
+                          <button 
+                            onClick={() => setBgVisMode('off')} 
+                            className={`text-[10px] tracking-wider uppercase py-2 px-2 border rounded transition-all ${bgVisMode === 'off' ? 'bg-white/20 border-white text-white font-bold' : 'border-white/10 text-white/50 hover:text-white bg-black/20'}`}
+                          >
+                            Disabled
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Column 3: MIDI Database */}
+                    <div className="flex flex-col gap-4 h-[500px]">
+                      <h3 className="text-xs font-bold tracking-widest text-white/50 uppercase">MIDI Database</h3>
+                      <div className="text-[10px] font-mono opacity-50 bg-white/5 p-2 rounded">Status: {midiStatus}</div>
+                      <div className="flex-1 bg-black/20 border border-white/10 rounded overflow-y-auto p-2">
+                        {Object.entries(TRAKTOR_S2_MAP).map(([key, value]) => (
+                          <div key={key} className="flex justify-between items-center py-1 border-b border-white/5 last:border-0">
+                            <span className="text-[10px] font-mono opacity-80 truncate mr-2" title={key}>{key}</span>
+                            <span className="text-[10px] font-mono font-bold bg-white/10 px-1 rounded shrink-0">
+                              {typeof value === 'number' ? `0x${value.toString(16).toUpperCase()}` : value}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button 
+                          onClick={handleExportMidi}
+                          className="flex-1 text-[10px] tracking-wider uppercase py-2 border border-white/20 hover:border-white text-white rounded transition-colors"
+                        >
+                          Export
+                        </button>
+                        <label className="flex-1 text-[10px] tracking-wider uppercase py-2 border border-white/20 hover:border-white text-white rounded transition-colors text-center cursor-pointer">
+                          Import
+                          <input type="file" className="hidden" accept=".json" onChange={handleImportMidi} onClick={(e) => { (e.target as HTMLInputElement).value = ''; }} />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
           </div>
         </div>
       </header>
       
-      {/* Global Track Progress */}
+      {/* Global Track Progress & Dual Waveforms with Hot Cues */}
       <div className="flex w-full shrink-0">
-        <OverlayedWaveforms isPlayingA={deckAPlay} isPlayingB={deckBPlay} fileA={deckAFile} fileB={deckBFile} thickness={waveformThickness} colorA={deckAColor} colorB={deckBColor} height={waveformHeight} />
+        <OverlayedWaveforms 
+          isPlayingA={deckAPlay} 
+          isPlayingB={deckBPlay} 
+          fileA={deckAFile} 
+          fileB={deckBFile} 
+          thickness={waveformThickness} 
+          colorA={deckAColor} 
+          colorB={deckBColor} 
+          height={effectiveWaveformHeight} 
+          isCompact={libraryVisible}
+          hotCuesA={deckAHotCues}
+          hotCuesB={deckBHotCues}
+        />
       </div>
 
       {/* Main Deck Area */}
       <MidiLearnContext.Provider value={{ learnMode: midiLearnMode, activeTarget: activeMidiTarget, setActiveTarget: setActiveMidiTarget }}>
         <main className="flex-1 flex overflow-hidden min-h-0 w-full relative">
-        <div 
-          className="w-full h-full flex items-center justify-center transition-transform duration-200"
-        >
+          {/* Audio-reactive Background Visualizer */}
+          <BackgroundVisualizer 
+            mode={bgVisMode} 
+            deckAColor={deckAColor} 
+            deckBColor={deckBColor} 
+            deckAPlay={deckAPlay} 
+            deckBPlay={deckBPlay} 
+          />
+          <div className="w-full h-full flex items-center justify-center transition-transform duration-200 z-10">
           <div 
-            className="flex gap-4 p-4 md:p-8 max-w-7xl mx-auto w-full h-full"
+            className={`flex gap-3 md:gap-4 max-w-7xl mx-auto w-full h-full items-center justify-center transition-all duration-300 ${
+              libraryVisible ? 'p-2 md:p-3' : 'p-3 md:p-6'
+            }`}
             style={{ 
               transform: `scale(${scale}) rotate(${rotation}deg) translate(${translateX}px, ${translateY}px)`
             }}
@@ -589,26 +867,46 @@ export default function App() {
               file={deckAFile} 
               isPlaying={deckAPlay}
               isLooping={deckALoop}
+              keylock={deckAKeylock}
+              hotCues={deckAHotCues}
               onLoadClick={() => fileInputARef.current?.click()}
               onPlay={() => togglePlay('A')}
               onCue={() => toggleCue('A')}
               onLoop={() => toggleLoop('A')}
+              onKeylock={() => toggleKeylock('A')}
+              onHotCueClick={(idx: number, isDel: boolean) => handleHotCueClick('A', idx, isDel)}
               thickness={waveformThickness}
+              isCompact={libraryVisible}
             />
 
             {/* Mixer */}
-            <div className="w-80 shrink-0 bg-neutral-900/50 rounded-2xl border border-white/5 p-6 flex flex-col items-center">
-              <h2 className="text-[10px] font-bold tracking-[0.2em] opacity-50 mb-6">MIXER</h2>
+            <div className={`w-72 sm:w-80 md:w-84 shrink-0 bg-neutral-900/50 rounded-2xl border border-white/5 flex flex-col justify-between items-center h-full transition-all duration-300 ${libraryVisible ? 'p-3' : 'p-4 md:p-5'}`}>
+              <h2 className={`text-[10px] font-bold tracking-[0.2em] opacity-50 shrink-0 ${libraryVisible ? 'mb-1.5' : 'mb-3'}`}>MIXER</h2>
               
-              <div className="flex-1 flex justify-between w-full px-2 relative">
+              <div className="flex-1 flex justify-between items-stretch w-full px-2 relative min-h-0">
                 
                 {/* Deck A Column */}
-                <div className="flex flex-col items-center gap-4 h-full">
+                <div className="flex flex-col items-center gap-2 h-full">
                   <EqControls deck="A" color={deckAColor} />
 
-                  {/* Deck A Vol */}
-                  <div className="flex flex-col items-center mt-auto h-[140px]">
-                    <span className="text-[10px] opacity-50 mb-4 font-bold" style={{ color: deckAColor }}>CH A</span>
+                  {/* Channel A PFL CUE Button */}
+                  <MidiControl midiKey="DECK_A_PFL_CUE">
+                    <button
+                      onClick={() => togglePflCue('A')}
+                      className={`w-9 h-7 rounded-md flex items-center justify-center border font-mono font-bold text-[10px] transition-all my-1 ${
+                        cueAActive
+                          ? 'bg-amber-400/20 border-amber-400 text-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.6)]'
+                          : 'bg-black/40 border-white/10 text-white/40 hover:text-white'
+                      }`}
+                      title="Channel A Headphone Cue (PFL)"
+                    >
+                      <Headphones className="w-3.5 h-3.5" />
+                    </button>
+                  </MidiControl>
+
+                  {/* Deck A Vol Fader */}
+                  <div className="flex flex-col items-center mt-auto h-[120px]">
+                    <span className="text-[10px] opacity-50 mb-2 font-bold" style={{ color: deckAColor }}>CH A</span>
                     <MidiControl midiKey="DECK_A_VOLUME">
                       <div className="flex-1 flex justify-center items-center relative w-12 h-full">
                         <input 
@@ -619,7 +917,7 @@ export default function App() {
                             setDeckAVol(val);
                             getAudioEngine().deckA.setVolume(val);
                           }}
-                          className="fader-vertical accent-custom absolute w-[120px] h-3 bg-black border border-white/10 rounded-full"
+                          className="fader-vertical accent-custom absolute w-[100px] h-3 bg-black border border-white/10 rounded-full"
                           style={{ transform: 'rotate(-90deg)', '--fader-color': deckAColor } as React.CSSProperties}
                         />
                       </div>
@@ -627,28 +925,67 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Central VU Meters */}
-                <div className="flex flex-col items-center h-full pt-2">
-                  <span className="text-[10px] opacity-0 mb-4 font-bold">VU</span>
-                  <div className="flex flex-row items-center justify-center gap-4 relative flex-1 w-full pb-4">
-                    <div className="flex flex-col items-center h-full gap-2">
-                      <VuMeter deck="A" color={deckAColor} />
-                      <span className="text-[9px] font-bold opacity-50" style={{ color: deckAColor }}>A</span>
-                    </div>
-                    <div className="flex flex-col items-center h-full gap-2">
-                      <VuMeter deck="B" color={deckBColor} />
-                      <span className="text-[9px] font-bold opacity-50" style={{ color: deckBColor }}>B</span>
+                {/* Central Column: VU Meters + Headphone Controls */}
+                <div className="flex-1 flex flex-col items-center justify-start gap-1 sm:gap-1.5 h-full pt-0 px-1 sm:px-1.5 min-w-0 min-h-0">
+                  {/* Headphone PFL Section */}
+                  <div className={`flex flex-col items-center gap-1 rounded-xl bg-black/40 border border-white/5 w-full shrink-0 ${libraryVisible ? 'p-1.5' : 'p-2'}`}>
+                    <span className="text-[8px] font-mono tracking-widest text-amber-400 font-bold uppercase flex items-center gap-1">
+                      <Headphones className="w-3 h-3" /> CUE / PFL
+                    </span>
+                    <div className="flex items-center justify-around w-full gap-2">
+                      <MidiControl midiKey="HEADPHONE_VOLUME">
+                        <Knob 
+                          label="VOL" 
+                          value={cueVol} 
+                          onChange={(v) => {
+                            setCueVol(v);
+                            getAudioEngine().setCueVolume(v);
+                          }} 
+                          accent 
+                          color="#f59e0b" 
+                        />
+                      </MidiControl>
+                      <MidiControl midiKey="CUE_MIX">
+                        <Knob 
+                          label="MIX" 
+                          value={cueMix} 
+                          onChange={(v) => {
+                            setCueMix(v);
+                            getAudioEngine().setCueMix(v);
+                          }} 
+                          accent 
+                          color="#f59e0b" 
+                        />
+                      </MidiControl>
                     </div>
                   </div>
+
+                  {/* Full-Height Pro Master/Channel Levels Visualizer spanning right to X-FADER */}
+                  <DualChannelVuMeter colorA={deckAColor} colorB={deckBColor} isCompact={libraryVisible} />
                 </div>
 
                 {/* Deck B Column */}
-                <div className="flex flex-col items-center gap-4 h-full">
+                <div className="flex flex-col items-center gap-2 h-full">
                   <EqControls deck="B" color={deckBColor} />
 
-                  {/* Deck B Vol */}
-                  <div className="flex flex-col items-center mt-auto h-[140px]">
-                    <span className="text-[10px] opacity-50 mb-4 font-bold" style={{ color: deckBColor }}>CH B</span>
+                  {/* Channel B PFL CUE Button */}
+                  <MidiControl midiKey="DECK_B_PFL_CUE">
+                    <button
+                      onClick={() => togglePflCue('B')}
+                      className={`w-9 h-7 rounded-md flex items-center justify-center border font-mono font-bold text-[10px] transition-all my-1 ${
+                        cueBActive
+                          ? 'bg-amber-400/20 border-amber-400 text-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.6)]'
+                          : 'bg-black/40 border-white/10 text-white/40 hover:text-white'
+                      }`}
+                      title="Channel B Headphone Cue (PFL)"
+                    >
+                      <Headphones className="w-3.5 h-3.5" />
+                    </button>
+                  </MidiControl>
+
+                  {/* Deck B Vol Fader */}
+                  <div className="flex flex-col items-center mt-auto h-[120px]">
+                    <span className="text-[10px] opacity-50 mb-2 font-bold" style={{ color: deckBColor }}>CH B</span>
                     <MidiControl midiKey="DECK_B_VOLUME">
                       <div className="flex-1 flex justify-center items-center relative w-12 h-full">
                         <input 
@@ -659,7 +996,7 @@ export default function App() {
                             setDeckBVol(val);
                             getAudioEngine().deckB.setVolume(val);
                           }}
-                          className="fader-vertical accent-custom absolute w-[120px] h-3 bg-black border border-white/10 rounded-full"
+                          className="fader-vertical accent-custom absolute w-[100px] h-3 bg-black border border-white/10 rounded-full"
                           style={{ transform: 'rotate(-90deg)', '--fader-color': deckBColor } as React.CSSProperties}
                         />
                       </div>
@@ -670,14 +1007,14 @@ export default function App() {
               </div>
 
               {/* Crossfader */}
-              <div className="w-full mt-6">
-                <div className="flex justify-between text-[9px] opacity-40 font-mono mb-2 font-bold">
+              <div className={`w-full shrink-0 ${libraryVisible ? 'mt-2' : 'mt-3 sm:mt-4'}`}>
+                <div className="flex justify-between text-[9px] opacity-40 font-mono mb-1 font-bold">
                   <span style={{ color: deckAColor }}>A</span>
                   <span>X-FADER</span>
                   <span style={{ color: deckBColor }}>B</span>
                 </div>
                 <MidiControl midiKey="CROSSFADER">
-                      <div className="relative w-full px-4 h-8 flex items-center justify-center">
+                  <div className="relative w-full px-4 h-8 flex items-center justify-center">
                     <input 
                       type="range" min="0" max="1" step="0.01" 
                       value={crossfader} 
@@ -700,20 +1037,29 @@ export default function App() {
               file={deckBFile} 
               isPlaying={deckBPlay}
               isLooping={deckBLoop}
+              keylock={deckBKeylock}
+              hotCues={deckBHotCues}
               onLoadClick={() => fileInputBRef.current?.click()}
               onPlay={() => togglePlay('B')}
               onCue={() => toggleCue('B')}
               onLoop={() => toggleLoop('B')}
+              onKeylock={() => toggleKeylock('B')}
+              onHotCueClick={(idx: number, isDel: boolean) => handleHotCueClick('B', idx, isDel)}
               thickness={waveformThickness}
+              isCompact={libraryVisible}
             />
           </div>
         </div>
       </main>
       </MidiLearnContext.Provider>
 
-      {/* Media Browser at Bottom */}
-      <div className={libraryVisible ? 'block shrink-0' : 'hidden'}>
-        <MediaBrowser onLoadToDeck={handleLoadDeck} />
+      {/* Media Browser with IndexedDB at Bottom - Smooth sliding drawer */}
+      <div 
+        className={`shrink-0 overflow-hidden transition-all duration-300 ease-in-out ${
+          libraryVisible ? 'h-52 opacity-100' : 'h-0 opacity-0 pointer-events-none'
+        }`}
+      >
+        <MediaBrowser onLoadToDeck={handleLoadDeck} onClose={() => setLibraryVisible(false)} />
       </div>
 
       <AILab 
@@ -773,7 +1119,7 @@ function EqControls({ deck, color }: { deck: 'A' | 'B', color: string }) {
   };
 
   return (
-    <div className="flex flex-col justify-center gap-4 w-16 items-center shrink-0">
+    <div className="flex flex-col justify-center gap-3 w-14 items-center shrink-0">
       <MidiControl midiKey={deck === 'A' ? 'DECK_A_EQ_HIGH' : 'DECK_B_EQ_HIGH'}>
         <Knob label="HIGH" value={eqHigh} onChange={(v) => applyEq('high', v)} accent color={color} />
       </MidiControl>
@@ -783,7 +1129,7 @@ function EqControls({ deck, color }: { deck: 'A' | 'B', color: string }) {
       <MidiControl midiKey={deck === 'A' ? 'DECK_A_EQ_LOW' : 'DECK_B_EQ_LOW'}>
         <Knob label="LOW" value={eqLow} onChange={(v) => applyEq('low', v)} accent color={color} />
       </MidiControl>
-      <div className="h-px w-full bg-white/10 my-2" />
+      <div className="h-px w-full bg-white/10 my-1" />
       <MidiControl midiKey={deck === 'A' ? 'DECK_A_FILTER' : 'DECK_B_FILTER'}>
         <Knob label="FILTER" value={filter} onChange={applyFilter} accent color={color} />
       </MidiControl>
@@ -791,62 +1137,287 @@ function EqControls({ deck, color }: { deck: 'A' | 'B', color: string }) {
   );
 }
 
-function VuMeter({ deck, color }: { deck: 'A' | 'B', color: string }) {
-  const [level, setLevel] = useState(0);
+function DualChannelVuMeter({ 
+  colorA, 
+  colorB, 
+  isCompact = false 
+}: { 
+  colorA: string; 
+  colorB: string; 
+  isCompact?: boolean; 
+}) {
+  const [levelA, setLevelA] = useState(0);
+  const [levelB, setLevelB] = useState(0);
+  const [peakA, setPeakA] = useState(0);
+  const [peakB, setPeakB] = useState(0);
+  const lastPeakTimeA = useRef(0);
+  const lastPeakTimeB = useRef(0);
 
   useEffect(() => {
-    let animationFrame: number;
+    let animId: number;
     const update = () => {
       const engine = getAudioEngine();
-      const target = deck === 'A' ? engine.deckA : engine.deckB;
-      setLevel(target.getLevel());
-      animationFrame = requestAnimationFrame(update);
-    };
-    update();
-    return () => cancelAnimationFrame(animationFrame);
-  }, [deck]);
+      const now = performance.now();
+      
+      const rawA = engine.deckA.getLevel();
+      const rawB = engine.deckB.getLevel();
 
-  const segments = 16;
-  return (
-    <div className="flex flex-col-reverse justify-between h-full w-4 bg-black/40 rounded p-1 border border-white/5 relative">
-      {Array.from({ length: segments }).map((_, i) => {
-        const threshold = i / segments;
-        const isActive = level > threshold;
-        const isRed = i >= segments - 2;
-        
-        let segmentColor = 'bg-white/10';
-        if (isActive) {
-          segmentColor = isRed ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]' : `shadow-[0_0_8px_${color}80]`;
+      // Analog VU meter ballistics: Fast attack on transients, smooth exponential decay (~18 dB/sec)
+      setLevelA(prev => rawA >= prev ? rawA : Math.max(0, prev * 0.90));
+      setLevelB(prev => rawB >= prev ? rawB : Math.max(0, prev * 0.90));
+
+      // Peak hold with 750ms hold time then smooth falloff
+      setPeakA(prev => {
+        if (rawA >= prev) {
+          lastPeakTimeA.current = now;
+          return rawA;
         }
+        if (now - lastPeakTimeA.current > 750) {
+          return Math.max(rawA, prev * 0.95);
+        }
+        return prev;
+      });
 
-        return (
-          <div 
-            key={i} 
-            className={`w-full flex-1 mb-[2px] rounded-sm transition-colors duration-75 ${segmentColor}`}
-            style={isActive && !isRed ? { backgroundColor: color } : {}}
+      setPeakB(prev => {
+        if (rawB >= prev) {
+          lastPeakTimeB.current = now;
+          return rawB;
+        }
+        if (now - lastPeakTimeB.current > 750) {
+          return Math.max(rawB, prev * 0.95);
+        }
+        return prev;
+      });
+
+      animId = requestAnimationFrame(update);
+    };
+    animId = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(animId);
+  }, []);
+
+  const totalSegments = isCompact ? 24 : 28;
+  const isClipA = levelA > 0.94;
+  const isClipB = levelB > 0.94;
+
+  return (
+    <div className="w-full flex-1 min-h-0 h-full flex flex-col justify-between bg-black/80 rounded-xl sm:rounded-2xl border border-white/10 p-2 sm:p-2.5 my-0.5 shadow-xl overflow-hidden transition-all duration-300">
+      {/* Header with Channel labels & Clip warning indicators */}
+      <div className="flex items-center justify-between w-full px-1 mb-1 shrink-0">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-mono font-black" style={{ color: colorA }}>CH A</span>
+          <span 
+            className={`w-2 h-2 rounded-full transition-colors ${
+              isClipA ? 'bg-red-500 shadow-[0_0_10px_#ef4444]' : 'bg-white/10'
+            }`} 
+            title="Channel A Clip"
           />
-        );
-      })}
+        </div>
+        <span className="text-[8px] font-mono tracking-widest text-white/40 uppercase font-bold">LEVELS</span>
+        <div className="flex items-center gap-1.5">
+          <span 
+            className={`w-2 h-2 rounded-full transition-colors ${
+              isClipB ? 'bg-red-500 shadow-[0_0_10px_#ef4444]' : 'bg-white/10'
+            }`} 
+            title="Channel B Clip"
+          />
+          <span className="text-[10px] font-mono font-black" style={{ color: colorB }}>CH B</span>
+        </div>
+      </div>
+
+      {/* Main Meter Area: Dual LED Ladders with Center dB Legend */}
+      <div className="flex-1 flex items-stretch justify-between w-full h-full min-h-0 gap-1.5 sm:gap-2">
+        {/* Channel A LED Ladder */}
+        <div className="flex-1 flex flex-col-reverse justify-between bg-black/60 rounded-lg p-1 border border-white/10 relative overflow-hidden h-full">
+          {Array.from({ length: totalSegments }).map((_, i) => {
+            const threshold = i / totalSegments;
+            const isActive = levelA > threshold;
+            const isPeak = Math.round(peakA * (totalSegments - 1)) === i && peakA > 0.05;
+            
+            // LED Tier Colors
+            const isRed = i >= totalSegments - 2;
+            const isOrange = i >= totalSegments - 5;
+            const isYellow = i >= totalSegments - 9;
+
+            let ledColor = 'bg-white/[0.06] border border-white/[0.04]';
+            let activeStyle: React.CSSProperties = {};
+
+            if (isActive || isPeak) {
+              if (isRed) {
+                ledColor = 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.9)] border-red-400';
+              } else if (isOrange) {
+                ledColor = 'bg-orange-500 shadow-[0_0_6px_rgba(249,115,22,0.85)] border-orange-400';
+              } else if (isYellow) {
+                ledColor = 'bg-yellow-400 shadow-[0_0_6px_rgba(250,204,21,0.75)] border-yellow-300';
+              } else {
+                ledColor = `shadow-[0_0_6px_${colorA}80] border-transparent`;
+                activeStyle = { backgroundColor: colorA };
+              }
+            }
+
+            return (
+              <div 
+                key={i} 
+                className={`w-full flex-1 mb-[1.5px] rounded-xs transition-colors duration-75 ${ledColor}`}
+                style={activeStyle}
+              />
+            );
+          })}
+        </div>
+
+        {/* Central dB Scale Markings */}
+        <div className="flex flex-col justify-between py-1 text-[8px] font-mono font-bold text-white/40 shrink-0 select-none text-center min-w-[26px]">
+          <span className="text-red-400 font-black tracking-wider">CLIP</span>
+          <span className="text-orange-400">+6</span>
+          <span>+3</span>
+          <span className="text-yellow-400 font-black">0</span>
+          <span>-3</span>
+          <span>-6</span>
+          <span>-12</span>
+          <span>-18</span>
+          <span>-24</span>
+          <span className="opacity-60">-∞</span>
+        </div>
+
+        {/* Channel B LED Ladder */}
+        <div className="flex-1 flex flex-col-reverse justify-between bg-black/60 rounded-lg p-1 border border-white/10 relative overflow-hidden h-full">
+          {Array.from({ length: totalSegments }).map((_, i) => {
+            const threshold = i / totalSegments;
+            const isActive = levelB > threshold;
+            const isPeak = Math.round(peakB * (totalSegments - 1)) === i && peakB > 0.05;
+            
+            const isRed = i >= totalSegments - 2;
+            const isOrange = i >= totalSegments - 5;
+            const isYellow = i >= totalSegments - 9;
+
+            let ledColor = 'bg-white/[0.06] border border-white/[0.04]';
+            let activeStyle: React.CSSProperties = {};
+
+            if (isActive || isPeak) {
+              if (isRed) {
+                ledColor = 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.9)] border-red-400';
+              } else if (isOrange) {
+                ledColor = 'bg-orange-500 shadow-[0_0_6px_rgba(249,115,22,0.85)] border-orange-400';
+              } else if (isYellow) {
+                ledColor = 'bg-yellow-400 shadow-[0_0_6px_rgba(250,204,21,0.75)] border-yellow-300';
+              } else {
+                ledColor = `shadow-[0_0_6px_${colorB}80] border-transparent`;
+                activeStyle = { backgroundColor: colorB };
+              }
+            }
+
+            return (
+              <div 
+                key={i} 
+                className={`w-full flex-1 mb-[1.5px] rounded-xs transition-colors duration-75 ${ledColor}`}
+                style={activeStyle}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Footer dB readout */}
+      <div className="flex justify-between items-center px-1.5 mt-1 text-[8px] font-mono text-white/35 tracking-widest uppercase shrink-0 font-bold">
+        <span>PEAK</span>
+        <span>dBu</span>
+        <span>HOLD</span>
+      </div>
     </div>
   );
 }
 
-function Deck({ id, theme, file, isPlaying, isLooping, onLoadClick, onPlay, onCue, onLoop, thickness }: any) {
+function Deck({ 
+  id, theme, file, isPlaying, isLooping, keylock, hotCues,
+  onLoadClick, onPlay, onCue, onLoop, onKeylock, onHotCueClick, thickness,
+  isCompact = false
+}: any) {
   const [pitch, setPitch] = useState(0.5);
   const [progress, setProgress] = useState(0);
   const [peaks, setPeaks] = useState<number[]>([]);
   const [rotation, setRotation] = useState(0);
   const [baseBpm, setBaseBpm] = useState(120);
+  const [delMode, setDelMode] = useState(false);
+  const [duration, setDuration] = useState(0);
 
   const isDragging = useRef(false);
   const dragStartPos = useRef({ x: 0, y: 0 });
   const startRotation = useRef(0);
+  const isJogTouched = useRef(false);
+  const wasPlayingBeforeTouch = useRef(false);
+  const pitchNudgeTimeout = useRef<any>(null);
+  const lastDragTime = useRef<number>(0);
+
+  const middleSectionRef = useRef<HTMLDivElement>(null);
+  const [dims, setDims] = useState({
+    jogSize: 210,
+    pitchWidth: 44,
+    pitchHeight: 210,
+    sliderLength: 130,
+    gap: 14
+  });
+
+  useLayoutEffect(() => {
+    const updateDims = () => {
+      const el = middleSectionRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const availW = rect.width;
+      const availH = rect.height;
+
+      if (availW <= 10 || availH <= 10) return;
+
+      // Adaptive gap: 8px on tight screens, up to 20px on spacious screens
+      const targetGap = Math.round(Math.max(8, Math.min(20, availW * 0.035)));
+
+      // Adaptive pitch fader width: 38px to 52px
+      const targetPitchWidth = Math.round(Math.max(38, Math.min(52, availW * 0.135)));
+
+      // Calculate maximum jog wheel diameter without overflowing container
+      // 12px buffer preserves comfortable margin from deck border
+      const maxW = availW - targetPitchWidth - targetGap - 12;
+      const maxH = availH - 6;
+
+      // Jog wheel diameter bounded by both available width and height (clamped 110px - 280px)
+      const jogSize = Math.round(Math.max(110, Math.min(280, Math.min(maxW, maxH))));
+
+      // Pitch fader height matches jog wheel diameter for balanced CDJ aesthetics
+      const pitchHeight = jogSize;
+
+      // Pitch fader width scales smoothly with jog size
+      const pitchWidth = Math.round(Math.max(38, Math.min(52, Math.min(targetPitchWidth, jogSize * 0.22))));
+
+      // Slider track throw length fits inside pitchHeight leaving space for labels, MT button, and % readout
+      const sliderLength = Math.round(Math.max(64, Math.min(185, pitchHeight - 68)));
+
+      setDims({
+        jogSize,
+        pitchWidth,
+        pitchHeight,
+        sliderLength,
+        gap: targetGap
+      });
+    };
+
+    updateDims();
+
+    const ro = new ResizeObserver(() => updateDims());
+    if (middleSectionRef.current) {
+      ro.observe(middleSectionRef.current);
+    }
+
+    window.addEventListener('resize', updateDims);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', updateDims);
+    };
+  }, [isCompact]);
 
   useEffect(() => {
     const engine = getAudioEngine();
     const target = id === 'A' ? engine.deckA : engine.deckB;
     const interval = setInterval(() => {
       const dur = target.duration;
+      setDuration(dur);
       if (dur > 0) {
         setProgress((target.currentTime / dur) * 100);
         if (!isDragging.current) {
@@ -855,23 +1426,84 @@ function Deck({ id, theme, file, isPlaying, isLooping, onLoadClick, onPlay, onCu
       }
       if (target.peaks !== peaks) setPeaks([...target.peaks]);
       if (target.baseBpm !== baseBpm) setBaseBpm(target.baseBpm);
-    }, 50);
+    }, 40);
     return () => clearInterval(interval);
   }, [id, peaks, baseBpm]);
 
   useEffect(() => {
     const handleMidiUpdate = (e: any) => {
       const { controlName, normalized } = e.detail;
-      
-      if (id === 'A') {
-        if (controlName === 'DECK_A_PITCH') setPitch(normalized);
+      if (id === 'A' && controlName === 'DECK_A_PITCH') setPitch(normalized);
+      if (id === 'B' && controlName === 'DECK_B_PITCH') setPitch(normalized);
+    };
+    const handleMidiSync = (e: any) => {
+      if (e.detail?.deck === id) handleSync();
+    };
+    const handleJogTouch = (e: any) => {
+      if (e.detail?.deck !== id) return;
+      const touched = !!e.detail?.touched;
+      isJogTouched.current = touched;
+      const engine = getAudioEngine();
+      const target = id === 'A' ? engine.deckA : engine.deckB;
+
+      if (touched) {
+        // Platter touch: Vinyl cue hold & enter scratch mode
+        wasPlayingBeforeTouch.current = target.isPlaying;
+        target.startScratch();
       } else {
-        if (controlName === 'DECK_B_PITCH') setPitch(normalized);
+        // Platter release: Resume playback if it was playing before touch
+        target.endScratch(wasPlayingBeforeTouch.current);
+        wasPlayingBeforeTouch.current = false;
       }
     };
+
+    let lastMidiJogTime = 0;
+    const handleJogMove = (e: any) => {
+      if (e.detail?.deck !== id) return;
+      const delta = e.detail?.delta || 0;
+      if (delta === 0) return;
+
+      const engine = getAudioEngine();
+      const target = id === 'A' ? engine.deckA : engine.deckB;
+
+      // Rotate visual vinyl platter
+      const rotDelta = delta * 6;
+      setRotation(r => r + rotDelta);
+
+      if (isJogTouched.current || !target.isPlaying) {
+        // SCRATCH / VINYL SEEK MODE:
+        const now = performance.now();
+        const dt = Math.max(5, lastMidiJogTime > 0 ? now - lastMidiJogTime : 20);
+        lastMidiJogTime = now;
+
+        const timeDiff = (rotDelta / 360) * 1.8;
+        const velocity = Math.max(-5.0, Math.min(5.0, (timeDiff / (dt / 1000))));
+
+        target.scratchMove(velocity, timeDiff);
+      } else {
+        // PITCH BEND / NUDGE MODE (Outer Rim rotation while playing):
+        const factor = delta > 0 ? 1.05 : 0.95;
+        target.jogNudge(factor);
+
+        clearTimeout(pitchNudgeTimeout.current);
+        pitchNudgeTimeout.current = setTimeout(() => {
+          target.restoreRate();
+        }, 150);
+      }
+    };
+
     window.addEventListener('dj-control', handleMidiUpdate);
-    return () => window.removeEventListener('dj-control', handleMidiUpdate);
-  }, [id]);
+    window.addEventListener('dj-sync', handleMidiSync);
+    window.addEventListener('dj-jog', handleJogMove);
+    window.addEventListener('dj-jog-touch', handleJogTouch);
+    return () => {
+      window.removeEventListener('dj-control', handleMidiUpdate);
+      window.removeEventListener('dj-sync', handleMidiSync);
+      window.removeEventListener('dj-jog', handleJogMove);
+      window.removeEventListener('dj-jog-touch', handleJogTouch);
+      clearTimeout(pitchNudgeTimeout.current);
+    };
+  }, [id, baseBpm, pitch]);
 
   const applyPitch = (val: number) => {
     setPitch(val);
@@ -884,7 +1516,6 @@ function Deck({ id, theme, file, isPlaying, isLooping, onLoadClick, onPlay, onCu
     const target = id === 'A' ? engine.deckA : engine.deckB;
     const other = id === 'A' ? engine.deckB : engine.deckA;
     if (target.baseBpm > 0 && other.baseBpm > 0) {
-      // Get other deck's effective rate and BPM
       const otherRate = other.playbackRate || 1.0; 
       const otherCurrentBpm = other.baseBpm * otherRate;
       
@@ -899,151 +1530,301 @@ function Deck({ id, theme, file, isPlaying, isLooping, onLoadClick, onPlay, onCu
     isDragging.current = true;
     dragStartPos.current = { x: e.clientX, y: e.clientY };
     startRotation.current = rotation;
-    e.currentTarget.setPointerCapture(e.pointerId);
+    lastDragTime.current = performance.now();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+
+    // Vinyl slipmat hold: Pause music immediately on touch & enter scratch mode
+    const engine = getAudioEngine();
+    const target = id === 'A' ? engine.deckA : engine.deckB;
+    wasPlayingBeforeTouch.current = target.isPlaying;
+    target.startScratch();
   };
 
   const handleJogPointerMove = (e: React.PointerEvent) => {
     if (!isDragging.current) return;
+    const now = performance.now();
+    const dt = Math.max(1, now - lastDragTime.current);
+    lastDragTime.current = now;
+
     const dx = e.clientX - dragStartPos.current.x;
     const dy = e.clientY - dragStartPos.current.y;
     const diff = (dx - dy) * 1.5; 
     const newRot = startRotation.current + diff;
     setRotation(newRot);
     
+    // Scratch / seek while paused under hand
+    // 360 degrees = 1.8 seconds of audio (standard 33 1/3 RPM vinyl speed)
     const engine = getAudioEngine();
     const target = id === 'A' ? engine.deckA : engine.deckB;
     const timeDiff = (diff / 360) * 1.8;
-    if (target.duration > 0) {
-      target.audioElement.currentTime = Math.max(0, Math.min(target.duration, target.audioElement.currentTime + timeDiff));
-      dragStartPos.current = { x: e.clientX, y: e.clientY };
-      startRotation.current = newRot;
-    }
+    const velocity = Math.max(-5.0, Math.min(5.0, (timeDiff / (dt / 1000))));
+
+    target.scratchMove(velocity, timeDiff);
+
+    dragStartPos.current = { x: e.clientX, y: e.clientY };
+    startRotation.current = newRot;
   };
 
   const handleJogPointerUp = (e: React.PointerEvent) => {
+    if (!isDragging.current) return;
     isDragging.current = false;
-    e.currentTarget.releasePointerCapture(e.pointerId);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+
+    // Vinyl slipmat release: Resume playback if it was playing before touch
+    const engine = getAudioEngine();
+    const target = id === 'A' ? engine.deckA : engine.deckB;
+    target.endScratch(wasPlayingBeforeTouch.current);
+    wasPlayingBeforeTouch.current = false;
   };
 
   const currentBpm = (baseBpm * (1.0 + (pitch - 0.5) * 0.32)).toFixed(2);
 
-  const pitchSection = (
-    <div className="w-16 flex flex-col items-center justify-end shrink-0 h-full">
-      <span className="text-[10px] opacity-50 mb-4 shrink-0 font-bold">PITCH</span>
-      <MidiControl midiKey={id === 'A' ? 'DECK_A_PITCH' : 'DECK_B_PITCH'}>
-        <div className="flex-1 flex justify-center items-center w-full relative h-[120px]">
-          <input 
-            type="range" min="0" max="1" step="0.001" 
-            value={pitch} 
-            onChange={(e) => applyPitch(parseFloat(e.target.value))}
-            className="fader-vertical accent-custom absolute w-[120px] h-3 bg-black border border-white/10 rounded-full"
-            style={{ transform: 'rotate(-90deg)', '--fader-color': theme } as React.CSSProperties}
-          />
-        </div>
-      </MidiControl>
-      <span className="text-[9px] font-mono mt-3 opacity-60 shrink-0 font-bold" style={{ color: pitch !== 0.5 ? theme : 'white' }}>
-        {((pitch - 0.5) * 32).toFixed(1)}%
-      </span>
-    </div>
-  );
-
   return (
-    <div className={`flex-1 bg-neutral-900/30 rounded-2xl border p-6 flex flex-col gap-6 relative overflow-hidden h-full transition-all duration-300 ${isPlaying ? 'border-opacity-30 z-10' : 'border-white/5'}`} style={isPlaying ? { borderColor: theme, boxShadow: `0 0 100px ${theme}40, inset 0 0 60px ${theme}20` } : {}}>
-      {/* Top Bar (Track Info) */}
-      <div className="flex justify-between items-start shrink-0">
-        <div className="flex-1 bg-black/40 border border-white/10 rounded-xl p-3 cursor-pointer transition-colors flex flex-col gap-2" style={{ borderColor: isPlaying ? theme : undefined }} onClick={onLoadClick}>
-          {/* Mini Waveform */}
-          <div className="w-full h-12 bg-black/40 border border-white/5 rounded relative overflow-hidden flex shrink-0">
+    <div className={`flex-1 bg-neutral-900/30 rounded-2xl border flex flex-col justify-between relative overflow-hidden h-full transition-all duration-300 ${isCompact ? 'p-3 md:p-3.5' : 'p-4 md:p-5'} ${isPlaying ? 'border-opacity-30 z-10' : 'border-white/5'}`} style={isPlaying ? { borderColor: theme, boxShadow: `0 0 100px ${theme}40, inset 0 0 60px ${theme}20` } : {}}>
+      
+      {/* 1. Top Bar (Track Info & Mini Waveform) */}
+      <div className={`flex justify-between items-start shrink-0 ${isCompact ? 'mb-1.5 sm:mb-2' : 'mb-2 sm:mb-3 lg:mb-3.5'}`}>
+        <div className="flex-1 bg-black/40 border border-white/10 rounded-xl p-2 sm:p-2.5 cursor-pointer transition-colors flex flex-col gap-1.5" style={{ borderColor: isPlaying ? theme : undefined }} onClick={onLoadClick}>
+          {/* Mini Waveform with Hot Cue Markers */}
+          <div className="w-full h-8 sm:h-9 bg-black/40 border border-white/5 rounded relative overflow-hidden flex shrink-0">
              <div className="absolute inset-0 pointer-events-none opacity-50">
-               <WaveformSVG peaks={peaks} color={theme} progress={progress} height={48} thickness={thickness} />
+               <WaveformSVG 
+                 peaks={peaks} 
+                 color={theme} 
+                 progress={progress} 
+                 height={36} 
+                 thickness={thickness} 
+                 hotCues={hotCues} 
+                 duration={duration} 
+                 compact={true}
+               />
              </div>
              <div className="absolute top-0 bottom-0 w-[2px] z-10 pointer-events-none" style={{ left: `${progress}%`, backgroundColor: theme, boxShadow: `0 0 10px ${theme}` }} />
           </div>
-          <div className="flex justify-between items-center mb-1">
-             <div className="text-[10px] tracking-widest font-mono font-bold" style={{ color: theme }}>DECK {id}</div>
+          <div className="flex justify-between items-center mb-0.5">
+             <div className="text-[10px] tracking-widest font-mono font-bold flex items-center gap-2" style={{ color: theme }}>
+               DECK {id}
+               {keylock && <span className="text-[8px] bg-[#00f2ff]/20 text-[#00f2ff] px-1 rounded border border-[#00f2ff]/40">MT</span>}
+             </div>
              <div className="text-[10px] font-mono tracking-wider opacity-50">BPM <span className="text-white font-bold text-xs">{currentBpm}</span></div>
           </div>
-          <div className="font-mono text-sm truncate opacity-90">
+          <div className="font-mono text-xs sm:text-sm truncate opacity-90">
             {file ? file.name : "CLICK TO LOAD TRACK"}
           </div>
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col justify-between relative z-10 min-h-0">
-        
-        {/* Jog Wheel */}
-        <div className="flex-1 flex flex-col items-center justify-center min-h-0 py-2 gap-6 w-full max-w-[400px] mx-auto">
-          
-          {/* Virtual Jog */}
-          <div 
-            className={`w-48 h-48 md:w-56 md:h-56 lg:w-64 lg:h-64 xl:w-72 xl:h-72 rounded-full border-4 flex items-center justify-center relative transition-colors duration-500 shrink-0 cursor-grab active:cursor-grabbing ${isPlaying ? 'bg-black/40' : 'border-white/5 bg-black/20'}`} 
-            style={isPlaying ? { borderColor: theme, boxShadow: `0 0 100px ${theme}60, inset 0 0 40px ${theme}40` } : {}}
-            onPointerDown={handleJogPointerDown}
-            onPointerMove={handleJogPointerMove}
-            onPointerUp={handleJogPointerUp}
-            onPointerCancel={handleJogPointerUp}
-          >
-            {isPlaying && (
-              <div className="absolute inset-0 rounded-full animate-ping opacity-30 pointer-events-none" style={{ backgroundColor: theme, animationDuration: '2s' }} />
-            )}
+      {/* 2. Middle Section: Vinyl Jog Wheel & Pitch Fader side-by-side (Scaled to Max Size with Breathing Room) */}
+      <div 
+        ref={middleSectionRef}
+        className="flex-1 flex items-center justify-center my-auto min-h-0 w-full px-2 py-1"
+        style={{ gap: `${dims.gap}px` }}
+      >
+        {/* Jog Wheel (Vinyl) - Dynamically Scaled Platter with MIDI Learn */}
+        <div className="flex items-center justify-center shrink-0">
+          <MidiControl midiKey={id === 'A' ? 'DECK_A_JOG_TURN' : 'DECK_B_JOG_TURN'}>
             <div 
-              className={`w-40 h-40 md:w-48 md:h-48 lg:w-56 lg:h-56 xl:w-64 xl:h-64 rounded-full border border-dashed ${isPlaying ? 'border-opacity-80' : 'border-white/20'}`} 
-              style={{ borderColor: isPlaying ? theme : undefined, transform: `rotate(${rotation}deg)` }}
+              className={`rounded-full border-4 flex items-center justify-center relative transition-colors duration-150 shrink-0 cursor-grab active:cursor-grabbing ${isPlaying ? 'bg-black/40' : 'border-white/5 bg-black/20'}`} 
+              style={{
+                width: `${dims.jogSize}px`,
+                height: `${dims.jogSize}px`,
+                ...(isPlaying ? { borderColor: theme, boxShadow: `0 0 90px ${theme}60, inset 0 0 45px ${theme}40` } : {})
+              }}
+              onPointerDown={handleJogPointerDown}
+              onPointerMove={handleJogPointerMove}
+              onPointerUp={handleJogPointerUp}
+              onPointerCancel={handleJogPointerUp}
             >
-              <div className="w-2 h-2 rounded-full absolute top-2 left-1/2 -translate-x-1/2" style={{ backgroundColor: theme, boxShadow: `0 0 20px ${theme}` }} />
+              {isPlaying && (
+                <div className="absolute inset-0 rounded-full animate-ping opacity-30 pointer-events-none" style={{ backgroundColor: theme, animationDuration: '2s' }} />
+              )}
+              {/* Outer vinyl grooved platter ring - 78% of diameter */}
+              <div 
+                className={`w-[78%] h-[78%] rounded-full border-2 border-dashed transition-opacity duration-150 ${isPlaying ? 'border-opacity-80' : 'border-white/20'}`} 
+                style={{ borderColor: isPlaying ? theme : undefined, transform: `rotate(${rotation}deg)` }}
+              >
+                <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full absolute top-1 sm:top-1.5 left-1/2 -translate-x-1/2" style={{ backgroundColor: theme, boxShadow: `0 0 20px ${theme}` }} />
+              </div>
+              {/* Center Spindle Hub with Vinyl Label - 28% of diameter */}
+              <div 
+                className="absolute w-[28%] h-[28%] min-w-[40px] min-h-[40px] max-w-[72px] max-h-[72px] rounded-full bg-gradient-to-br from-neutral-800 to-black border border-white/20 flex flex-col items-center justify-center shadow-lg pointer-events-none select-none"
+              >
+                <div className="w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full bg-black border border-white/30 mb-0.5" />
+                <div className="text-[7px] sm:text-[8px] font-mono font-bold opacity-40 text-center tracking-wider leading-none">
+                  VINYL<br/>CTRL
+                </div>
+              </div>
             </div>
-            {/* Center Label */}
-            <div className="absolute text-[10px] font-mono opacity-30 text-center pointer-events-none select-none">
-              VINYL<br/>CTRL
+          </MidiControl>
+        </div>
+
+        {/* Vertical Pitch Fader Strip (Dynamically Adjusted Width & Height alongside Vinyl) */}
+        <div 
+          className="flex flex-col items-center justify-between bg-black/40 border border-white/10 rounded-xl py-2 sm:py-2.5 px-1 sm:px-1.5 shrink-0 shadow-inner transition-colors duration-150"
+          style={{ width: `${dims.pitchWidth}px`, height: `${dims.pitchHeight}px` }}
+        >
+          <span className="text-[8.5px] sm:text-[9.5px] font-bold font-mono tracking-wider opacity-60 shrink-0">PITCH</span>
+
+          {/* Keylock / MT Button */}
+          <MidiControl midiKey={id === 'A' ? 'DECK_A_KEYLOCK' : 'DECK_B_KEYLOCK'}>
+            <button
+              onClick={onKeylock}
+              className={`px-1.5 py-0.5 rounded text-[7.5px] sm:text-[8px] font-mono font-bold tracking-tight border transition-all shrink-0 ${
+                keylock 
+                  ? 'bg-[#00f2ff]/20 border-[#00f2ff] text-[#00f2ff] shadow-[0_0_10px_rgba(0,242,255,0.4)]' 
+                  : 'bg-black/40 border-white/15 text-white/40 hover:text-white'
+              }`}
+              title="Master Tempo / Keylock: Preserves pitch when tempo changes"
+            >
+              {dims.pitchWidth < 44 ? (keylock ? 'MT' : 'LOCK') : (keylock ? 'MT ON' : 'KEYLOCK')}
+            </button>
+          </MidiControl>
+
+          {/* Fader Track - Scaled Throw */}
+          <MidiControl midiKey={id === 'A' ? 'DECK_A_PITCH' : 'DECK_B_PITCH'}>
+            <div 
+              className="relative w-7 sm:w-8 flex items-center justify-center my-auto shrink-0"
+              style={{ height: `${dims.sliderLength}px` }}
+            >
+              {/* 0% Center detent tick line */}
+              <div className="absolute top-1/2 left-0 right-0 h-px bg-white/40 pointer-events-none z-10" />
+              {/* Calibration ticks */}
+              <div className="absolute top-1/4 left-1 w-1.5 h-px bg-white/20 pointer-events-none" />
+              <div className="absolute top-3/4 left-1 w-1.5 h-px bg-white/20 pointer-events-none" />
+              <input 
+                type="range" min="0" max="1" step="0.001" 
+                value={pitch} 
+                onChange={(e) => applyPitch(parseFloat(e.target.value))}
+                className="pitch-fader accent-custom absolute h-2.5 bg-black border border-white/15 rounded-full cursor-pointer"
+                style={{ 
+                  width: `${dims.sliderLength}px`,
+                  transform: 'rotate(-90deg)', 
+                  '--fader-color': theme 
+                } as React.CSSProperties}
+              />
             </div>
+          </MidiControl>
+
+          {/* % Readout */}
+          <span 
+            className="text-[8px] sm:text-[9px] font-mono font-bold tracking-tight shrink-0" 
+            style={{ color: pitch !== 0.5 ? theme : 'rgba(255,255,255,0.5)' }}
+          >
+            {((pitch - 0.5) * 32).toFixed(1)}%
+          </span>
+        </div>
+      </div>
+
+      {/* 3. Bottom Section: Hot Cues & Transport Row sharing the exact same container & total width */}
+      <div className={`w-full max-w-[340px] md:max-w-[360px] mx-auto flex flex-col gap-2 shrink-0 ${isCompact ? 'mt-1.5 sm:mt-2' : 'mt-2 sm:mt-3 lg:mt-3.5'} pb-1`}>
+        
+        {/* Hot Cues Header & Row */}
+        <div className="w-full flex flex-col gap-1.5">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[9px] font-mono tracking-widest font-bold opacity-50 uppercase">HOT CUES</span>
+            <button
+              onClick={() => setDelMode(!delMode)}
+              className={`text-[8px] font-mono tracking-wider uppercase px-2 py-0.5 rounded border transition-all ${
+                delMode 
+                  ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse font-bold' 
+                  : 'border-white/10 text-white/30 hover:text-white bg-black/20'
+              }`}
+              title="Click pad while DEL is ON to clear it"
+            >
+              {delMode ? 'DEL ACTIVE' : 'DEL CUE'}
+            </button>
+          </div>
+
+          {/* 4 Compact Performance Pads - Exactly 4 columns */}
+          <div className="grid grid-cols-4 gap-2 w-full">
+            {HOT_CUE_COLORS.map((padColor, idx) => {
+              const cueTime = hotCues[idx];
+              const isSet = cueTime !== null && cueTime !== undefined;
+              const formattedTime = isSet 
+                ? `${Math.floor(cueTime / 60)}:${(cueTime % 60).toFixed(1).padStart(4, '0')}`
+                : null;
+
+              return (
+                <MidiControl key={idx} midiKey={id === 'A' ? `DECK_A_HOTCUE_${idx + 1}` : `DECK_B_HOTCUE_${idx + 1}`}>
+                  <button
+                    onClick={() => onHotCueClick(idx, delMode)}
+                    className={`h-9 rounded-lg border flex flex-col items-center justify-center relative transition-all active:scale-95 group select-none ${
+                      isSet 
+                        ? 'bg-black/60 shadow-md' 
+                        : 'bg-black/30 border-white/10 hover:border-white/30 text-white/30 hover:text-white/70'
+                    }`}
+                    style={isSet ? {
+                      borderColor: padColor,
+                      boxShadow: `0 0 10px ${padColor}40, inset 0 0 6px ${padColor}20`,
+                      color: padColor
+                    } : {}}
+                    title={isSet ? `Hot Cue ${idx + 1}: ${formattedTime} (Click to jump)` : `Hot Cue ${idx + 1} Empty (Click to set)`}
+                  >
+                    <span className="text-[10px] font-black font-mono leading-none">
+                      {idx + 1}
+                    </span>
+                    <span className="text-[7.5px] font-mono mt-0.5 opacity-80 leading-none">
+                      {isSet ? formattedTime : '+ SET'}
+                    </span>
+                  </button>
+                </MidiControl>
+              );
+            })}
           </div>
         </div>
 
-        {/* Bottom Controls */}
-        <div className="flex justify-center items-end gap-6 h-[160px] shrink-0 pb-2">
-          
-          {id === 'A' && pitchSection}
-
-          {/* Transport Buttons */}
-          <div className="flex gap-4 shrink-0 mb-4 items-center">
+        {/* Transport Row - Exactly 4 columns, matching the exact width & column gaps of Hot Cues above! */}
+        <div className="grid grid-cols-4 gap-2 w-full">
+          {/* SYNC */}
+          <MidiControl midiKey={id === 'A' ? 'DECK_A_SYNC_BTN' : 'DECK_B_SYNC_BTN'}>
             <button 
               onClick={handleSync}
-              className="px-4 py-2 h-10 rounded-lg text-xs font-bold font-mono tracking-widest bg-black/40 border border-white/20 hover:border-white/60 transition-colors text-white mr-2"
+              className="h-12 rounded-xl text-[11px] font-bold font-mono tracking-wider bg-black/40 border border-white/20 hover:border-white/60 transition-all text-white flex items-center justify-center active:scale-95 shadow-sm"
               title="Sync BPM with other deck"
             >
               SYNC
             </button>
-            <MidiControl midiKey={id === 'A' ? 'DECK_A_PLAY_BTN' : 'DECK_B_PLAY_BTN'}>
-              <button 
-                onClick={onPlay}
-                className="w-16 h-16 rounded-xl flex items-center justify-center border-2 transition-all hover:scale-105 active:scale-95"
-                style={isPlaying ? { backgroundColor: `${theme}20`, borderColor: theme, color: theme, boxShadow: `0 0 15px ${theme}40` } : { backgroundColor: 'rgba(0,0,0,0.4)', borderColor: 'rgba(255,255,255,0.1)', color: 'white' }}
-              >
-                {isPlaying ? <Pause className="w-8 h-8 fill-current" /> : <Play className="w-8 h-8 fill-current translate-x-[2px]" />}
-              </button>
-            </MidiControl>
-            <MidiControl midiKey={id === 'A' ? 'DECK_A_CUE_BTN' : 'DECK_B_CUE_BTN'}>
-              <button 
-                onClick={onCue}
-                className="w-16 h-16 rounded-xl flex items-center justify-center border-2 bg-black/40 border-white/10 hover:border-white/30 text-white transition-all active:scale-95"
-              >
-                <span className="font-bold text-[11px] tracking-wider">CUE</span>
-              </button>
-            </MidiControl>
-            <MidiControl midiKey={id === 'A' ? 'DECK_A_LOOP_BTN' : 'DECK_B_LOOP_BTN'}>
-              <button 
-                onClick={onLoop}
-                className={`w-16 h-16 rounded-xl flex items-center justify-center border-2 transition-all hover:scale-105 active:scale-95 ${isLooping ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-black/40 border-white/10 hover:border-white/30 text-white'}`}
-              >
-                <Repeat className="w-6 h-6" />
-              </button>
-            </MidiControl>
-          </div>
+          </MidiControl>
 
-          {id === 'B' && pitchSection}
+          {/* PLAY / PAUSE */}
+          <MidiControl midiKey={id === 'A' ? 'DECK_A_PLAY_BTN' : 'DECK_B_PLAY_BTN'}>
+            <button 
+              onClick={onPlay}
+              className="h-12 rounded-xl flex items-center justify-center border-2 transition-all hover:scale-105 active:scale-95 shadow-md"
+              style={isPlaying ? { backgroundColor: `${theme}20`, borderColor: theme, color: theme, boxShadow: `0 0 15px ${theme}40` } : { backgroundColor: 'rgba(0,0,0,0.4)', borderColor: 'rgba(255,255,255,0.15)', color: 'white' }}
+            >
+              {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current translate-x-[1px]" />}
+            </button>
+          </MidiControl>
 
+          {/* CUE */}
+          <MidiControl midiKey={id === 'A' ? 'DECK_A_CUE_BTN' : 'DECK_B_CUE_BTN'}>
+            <button 
+              onClick={onCue}
+              className="h-12 rounded-xl flex items-center justify-center border-2 bg-black/40 border-white/15 hover:border-white/30 text-white transition-all active:scale-95 shadow-sm"
+            >
+              <span className="font-bold text-[11px] tracking-wider">CUE</span>
+            </button>
+          </MidiControl>
+
+          {/* LOOP */}
+          <MidiControl midiKey={id === 'A' ? 'DECK_A_LOOP_BTN' : 'DECK_B_LOOP_BTN'}>
+            <button 
+              onClick={onLoop}
+              className={`h-12 rounded-xl flex items-center justify-center border-2 transition-all hover:scale-105 active:scale-95 shadow-sm ${isLooping ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-black/40 border-white/15 hover:border-white/30 text-white'}`}
+              title="Seamless Loop"
+            >
+              <Repeat className="w-5 h-5" />
+            </button>
+          </MidiControl>
         </div>
+
       </div>
+
     </div>
   );
 }
@@ -1084,25 +1865,24 @@ function Knob({
     window.addEventListener('mouseup', handleMouseUp);
   };
 
-  // Map 0-1 to -135 to 135 deg
   const rotation = -135 + (value * 270);
-  
-  const radius = 22;
+  const radius = 19;
   const circumference = 2 * Math.PI * radius;
-  const dashLength = circumference * 0.75;
-  const strokeDashoffset = circumference - (value * dashLength);
+  const totalArc = circumference * 0.75;
+  // Compensate for round linecap (1.5px radius) so the tip aligns with the needle point
+  const activeLength = value > 0.01 ? Math.max(0.1, (value * totalArc) - 1.5) : 0;
 
   const isMidiLinked = props['data-midi-linked'];
   const midiTheme = props['data-midi-theme'];
 
   return (
     <div 
-      className={`flex flex-col items-center gap-2 ${className}`} 
+      className={`flex flex-col items-center gap-1.5 ${className}`} 
       style={style}
       onClickCapture={onClickCapture}
       onMouseDownCapture={onMouseDownCapture}
     >
-      <div className={`relative group cursor-pointer w-12 h-12 shrink-0 ${isDragging ? 'scale-105' : ''} transition-transform`}
+      <div className={`relative group cursor-pointer w-11 h-11 shrink-0 ${isDragging ? 'scale-105' : ''} transition-transform`}
         style={isMidiLinked ? { filter: `drop-shadow(0 0 8px ${midiTheme})` } : undefined}
         onMouseDown={handleMouseDown}
         onWheel={(e) => {
@@ -1113,40 +1893,38 @@ function Knob({
         }}
       >
         <svg className="absolute inset-0 w-full h-full transform rotate-[135deg] pointer-events-none">
-          {/* Empty track */}
           <circle
-            cx="24" cy="24" r="22"
+            cx="22" cy="22" r={radius}
             fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="3"
-            strokeDasharray={`${dashLength} ${circumference}`}
+            strokeDasharray={`${totalArc} ${circumference}`}
             strokeLinecap="round"
           />
-          {/* Filled track */}
-          <circle
-            cx="24" cy="24" r="22"
-            fill="none" stroke={accent ? color : '#ffffff'} strokeWidth="3"
-            strokeDasharray={`${circumference}`}
-            strokeDashoffset={strokeDashoffset}
-            strokeLinecap="round"
-            style={{ 
-              filter: accent ? `drop-shadow(0 0 5px ${color})` : `drop-shadow(0 0 5px rgba(255,255,255,0.7))`
-            }}
-          />
+          {value > 0.01 && (
+            <circle
+              cx="22" cy="22" r={radius}
+              fill="none" stroke={accent ? color : '#ffffff'} strokeWidth="3"
+              strokeDasharray={`${activeLength} ${circumference}`}
+              strokeDashoffset={0}
+              strokeLinecap="round"
+              style={{ 
+                filter: accent ? `drop-shadow(0 0 5px ${color})` : `drop-shadow(0 0 5px rgba(255,255,255,0.7))`
+              }}
+            />
+          )}
         </svg>
 
-        {/* Background circle */}
         <div className="absolute inset-1 rounded-full border border-white/10 bg-black/80 shadow-inner" />
-        {/* Indicator */}
         <div 
           className="absolute inset-1 rounded-full pointer-events-none"
           style={{ transform: `rotate(${rotation}deg)` }}
         >
           <div 
-            className={`w-[3px] h-3 absolute top-1 left-1/2 -translate-x-1/2 rounded-full ${!accent ? 'bg-white' : ''}`}
+            className={`w-[2.5px] h-2.5 absolute top-1 left-1/2 -translate-x-1/2 rounded-full ${!accent ? 'bg-white' : ''}`}
             style={accent ? { backgroundColor: color, boxShadow: `0 0 8px ${color}` } : {}}
           />
         </div>
       </div>
-      <span className="text-[9px] font-bold tracking-wider opacity-50 group-hover:opacity-100 transition-opacity select-none pointer-events-none">
+      <span className="text-[8px] font-bold tracking-wider opacity-50 group-hover:opacity-100 transition-opacity select-none pointer-events-none">
         {label}
       </span>
     </div>

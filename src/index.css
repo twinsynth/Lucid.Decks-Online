@@ -45,6 +45,33 @@
     border-color: var(--fader-color);
     box-shadow: 0 0 25px var(--fader-color), inset 0 0 10px var(--fader-color);
   }
+  .pitch-fader {
+    -webkit-appearance: none;
+    outline: none;
+  }
+  .pitch-fader::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 30px;
+    background: #111;
+    border-radius: 3px;
+    cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: 0 0 10px rgba(255,255,255,0.4);
+  }
+  .pitch-fader.accent-custom::-webkit-slider-thumb {
+    border-color: var(--fader-color);
+    box-shadow: 0 0 16px var(--fader-color), inset 0 0 6px var(--fader-color);
+  }
+  .pitch-fader::-moz-range-thumb {
+    width: 16px;
+    height: 30px;
+    background: #111;
+    border-radius: 3px;
+    cursor: pointer;
+    border: 2px solid var(--fader-color, #fff);
+    box-shadow: 0 0 10px var(--fader-color, rgba(255,255,255,0.4));
+  }
   .fader-horizontal {
     -webkit-appearance: none;
     outline: none;

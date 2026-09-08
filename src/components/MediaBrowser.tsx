@@ -1,72 +1,126 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { FolderOpen, FileAudio, Play, Cloud, Loader2 } from 'lucide-react';
+import { FolderOpen, FileAudio, Cloud, Loader2, Trash2, Search, HardDrive, Sparkles, ChevronDown } from 'lucide-react';
+import { 
+  saveTrackToDB, 
+  getAllTracksFromDB, 
+  deleteTrackFromDB, 
+  StoredTrack, 
+  getStorageEstimate 
+} from '../lib/LibraryDB';
 
 interface MediaBrowserProps {
-  onLoadToDeck: (deck: 'A' | 'B', file: File) => void;
+  onLoadToDeck: (deck: 'A' | 'B', file: File, trackId?: string, hotCues?: (number | null)[]) => void;
+  onClose?: () => void;
 }
 
-export function MediaBrowser({ onLoadToDeck }: MediaBrowserProps) {
-  const [files, setFiles] = useState<File[]>([]);
+export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
+  const [tracks, setTracks] = useState<StoredTrack[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [storageInfo, setStorageInfo] = useState<{ usedMB: string; quotaMB: string }>({ usedMB: '0.0', quotaMB: 'N/A' });
   const [isLoadingDrive, setIsLoadingDrive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load tracks from IndexedDB on startup
+  useEffect(() => {
+    loadLibrary();
+  }, []);
+
+  const loadLibrary = async () => {
+    try {
+      const stored = await getAllTracksFromDB();
+      setTracks(stored);
+      const est = await getStorageEstimate();
+      setStorageInfo(est);
+    } catch (err) {
+      console.error('Failed to load library from IndexedDB:', err);
+    }
+  };
+
+  const addFilesToLibrary = async (filesToAdd: (File | Blob)[], source: 'local' | 'drive' | 'ai' = 'local') => {
+    for (const f of filesToAdd) {
+      const name = f instanceof File ? f.name : `Track_${Date.now()}.wav`;
+      // Check if already in library by name and size
+      const exists = tracks.some(t => t.name === name && t.size === f.size);
+      if (!exists) {
+        try {
+          const saved = await saveTrackToDB(f, { name, source });
+          setTracks(prev => [saved, ...prev]);
+        } catch (err) {
+          console.error('Failed to save track to IndexedDB:', err);
+        }
+      }
+    }
+    const est = await getStorageEstimate();
+    setStorageInfo(est);
+  };
+
+  const handleDeleteTrack = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await deleteTrackFromDB(id);
+      setTracks(prev => prev.filter(t => t.id !== id));
+      const est = await getStorageEstimate();
+      setStorageInfo(est);
+    } catch (err) {
+      console.error('Failed to delete track:', err);
+    }
+  };
+
+  const handleLoadTrack = (deck: 'A' | 'B', track: StoredTrack) => {
+    const file = track.blob instanceof File 
+      ? track.blob 
+      : new File([track.blob], track.name, { type: track.type || 'audio/mpeg' });
+    onLoadToDeck(deck, file, track.id, track.hotCues);
+  };
 
   const downloadDriveFile = async (id: string, accessToken: string, name: string, mimeType: string): Promise<File | null> => {
-      try {
-          const response = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, {
-            headers: {
-              'Authorization': `Bearer ${accessToken}`
-            }
-          });
-          if (!response.ok) {
-              console.error(`Failed to download ${name}`);
-              return null;
-          }
-          const blob = await response.blob();
-          return new File([blob], name, { type: mimeType });
-      } catch (err) {
-          console.error(`Error downloading ${name}`, err);
-          return null;
-      }
-  }
+    try {
+      const response = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      return new File([blob], name, { type: mimeType });
+    } catch (err) {
+      console.error(`Error downloading ${name}`, err);
+      return null;
+    }
+  };
 
   const handlePickedFiles = async (docs: any[], accessToken: string) => {
     setIsLoadingDrive(true);
     try {
-        const driveFiles: File[] = [];
-        for (const doc of docs) {
-            if (doc.mimeType === 'application/vnd.google-apps.folder') {
-                const folderId = doc.id;
-                const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&fields=files(id,name,mimeType)`;
-                const res = await fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` } });
-                const json = await res.json();
-                if (json.files) {
-                   for (const f of json.files) {
-                       if (f.mimeType.startsWith('audio/') || f.mimeType === 'video/mp4' || f.name.match(/\.(mp3|wav|flac|aac|ogg|m4a|aiff)$/i)) {
-                           const file = await downloadDriveFile(f.id, accessToken, f.name, f.mimeType);
-                           if (file) driveFiles.push(file);
-                       }
-                   }
-                }
-            } else {
-                const file = await downloadDriveFile(doc.id, accessToken, doc.name, doc.mimeType);
+      const driveFiles: File[] = [];
+      for (const doc of docs) {
+        if (doc.mimeType === 'application/vnd.google-apps.folder') {
+          const folderId = doc.id;
+          const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&fields=files(id,name,mimeType)`;
+          const res = await fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` } });
+          const json = await res.json();
+          if (json.files) {
+            for (const f of json.files) {
+              if (f.mimeType.startsWith('audio/') || f.mimeType === 'video/mp4' || f.name.match(/\.(mp3|wav|flac|aac|ogg|m4a|aiff)$/i)) {
+                const file = await downloadDriveFile(f.id, accessToken, f.name, f.mimeType);
                 if (file) driveFiles.push(file);
+              }
             }
+          }
+        } else {
+          const file = await downloadDriveFile(doc.id, accessToken, doc.name, doc.mimeType);
+          if (file) driveFiles.push(file);
         }
-        
-        if (driveFiles.length > 0) {
-            setFiles(prev => {
-              const existingNames = new Set(prev.map(f => f.name));
-              const added = driveFiles.filter(f => !existingNames.has(f.name));
-              return [...prev, ...added];
-            });
-        }
+      }
+      
+      if (driveFiles.length > 0) {
+        await addFilesToLibrary(driveFiles, 'drive');
+      }
     } catch (err) {
-        console.error("Error loading drive files:", err);
+      console.error("Error loading drive files:", err);
     } finally {
-        setIsLoadingDrive(false);
+      setIsLoadingDrive(false);
     }
-  }
+  };
 
   const handleDrivePicker = () => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -79,8 +133,8 @@ export function MediaBrowser({ onLoadToDeck }: MediaBrowserProps) {
     const gapi: any = (window as any).gapi;
 
     if (!g || !g.accounts) {
-       alert("Google Identity Services not loaded yet.");
-       return;
+      alert("Google Identity Services not loaded yet.");
+      return;
     }
 
     const client = g.accounts.oauth2.initTokenClient({
@@ -107,7 +161,7 @@ export function MediaBrowser({ onLoadToDeck }: MediaBrowserProps) {
             .addView(view)
             .setOAuthToken(accessToken)
             .setCallback((data: any) => {
-              if (data.action == gapi.picker.Action.PICKED) {
+              if (data.action === gapi.picker.Action.PICKED) {
                 handlePickedFiles(data.docs, accessToken);
               }
             })
@@ -115,7 +169,7 @@ export function MediaBrowser({ onLoadToDeck }: MediaBrowserProps) {
             .enableFeature(gapi.picker.Feature.MULTISELECT_ENABLED)
             .build();
           picker.setVisible(true);
-        }
+        };
 
         if (!gapi.picker) {
           gapi.load('picker', () => showPicker(tokenResponse.access_token));
@@ -128,55 +182,40 @@ export function MediaBrowser({ onLoadToDeck }: MediaBrowserProps) {
     client.requestAccessToken();
   };
 
+  // Event listener for AI Lab track additions
   useEffect(() => {
-    const handleAddFile = (e: Event) => {
+    const handleAddFile = async (e: Event) => {
       const customEvent = e as CustomEvent;
       if (customEvent.detail?.file) {
-        setFiles(prev => {
-          const exists = prev.some(f => f.name === customEvent.detail.file.name);
-          if (exists) return prev;
-          return [customEvent.detail.file, ...prev];
-        });
+        await addFilesToLibrary([customEvent.detail.file], 'ai');
       }
     };
     window.addEventListener('dj-add-file', handleAddFile);
     return () => window.removeEventListener('dj-add-file', handleAddFile);
-  }, []);
+  }, [tracks]);
 
-  const handleFiles = (newFiles: FileList | null) => {
+  const handleFiles = async (newFiles: FileList | null) => {
     if (!newFiles) return;
-    const audioFiles = Array.from(newFiles).filter(f => f.type.startsWith('audio/'));
-    setFiles(prev => {
-      // Avoid duplicates based on name
-      const existingNames = new Set(prev.map(f => f.name));
-      const added = audioFiles.filter(f => !existingNames.has(f.name));
-      return [...prev, ...added];
-    });
+    const audioFiles = Array.from(newFiles).filter(f => f.type.startsWith('audio/') || f.name.match(/\.(mp3|wav|flac|aac|ogg|m4a|aiff)$/i));
+    await addFilesToLibrary(audioFiles, 'local');
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
     
-    // For dropping folders, ideally we'd use File System Access API or webkitGetAsEntry
-    // But as a fallback, we just take files. Dragging folders might not give all files easily without recursive read.
-    // If we use DataTransferItem, we can traverse directories. 
-    // Since this is a simple implementation, let's just grab the flat files or items.
     const items = e.dataTransfer.items;
     if (items) {
-      let audioFiles: File[] = [];
+      const audioFiles: File[] = [];
       const promises: Promise<void>[] = [];
 
-      const traverseFileTree = (item: any, path = '') => {
+      const traverseFileTree = (item: any) => {
         if (!item) return;
         if (item.isFile) {
           promises.push(new Promise((resolve) => {
             item.file((file: File) => {
               const isAudio = file.type.startsWith('audio/') || file.name.match(/\.(mp3|wav|flac|aac|ogg|m4a|aiff)$/i);
-              if (isAudio) {
-                // Keep path info if needed, but for now just push file
-                audioFiles.push(file);
-              }
+              if (isAudio) audioFiles.push(file);
               resolve();
             });
           }));
@@ -188,8 +227,8 @@ export function MediaBrowser({ onLoadToDeck }: MediaBrowserProps) {
                 if (entries.length === 0) {
                   resolve();
                 } else {
-                  entries.forEach(entry => traverseFileTree(entry, path + item.name + '/'));
-                  readEntries(); // Continue reading if more entries
+                  entries.forEach(entry => traverseFileTree(entry));
+                  readEntries();
                   resolve();
                 }
               });
@@ -205,14 +244,9 @@ export function MediaBrowser({ onLoadToDeck }: MediaBrowserProps) {
       }
 
       Promise.all(promises).then(() => {
-        // Wait a short tick for nested promises
-        setTimeout(() => {
+        setTimeout(async () => {
           if (audioFiles.length > 0) {
-             setFiles(prev => {
-              const existingNames = new Set(prev.map(f => f.name));
-              const added = audioFiles.filter(f => !existingNames.has(f.name));
-              return [...prev, ...added];
-            });
+            await addFilesToLibrary(audioFiles, 'local');
           }
         }, 100);
       });
@@ -221,28 +255,42 @@ export function MediaBrowser({ onLoadToDeck }: MediaBrowserProps) {
     }
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  };
-  
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-  };
+  const filteredTracks = tracks.filter(t => 
+    t.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <div 
-      className={`h-48 border-t border-white/10 bg-black/40 shrink-0 flex flex-col transition-colors ${isDragOver ? 'bg-[#00f2ff]/10 border-[#00f2ff]/50' : ''}`}
+      className={`h-full w-full border-t border-white/10 bg-black/50 shrink-0 flex flex-col transition-colors ${isDragOver ? 'bg-[#00f2ff]/10 border-[#00f2ff]/50' : ''}`}
       onDrop={handleDrop}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
+      onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+      onDragLeave={(e) => { e.preventDefault(); setIsDragOver(false); }}
     >
-      <div className="flex items-center justify-between p-2 px-4 border-b border-white/5 bg-black/20">
-        <div className="flex items-center gap-2 text-[10px] tracking-widest text-[#00f2ff] font-bold">
-          <FolderOpen className="w-3 h-3" />
-          LIBRARY {files.length > 0 && `(${files.length})`}
+      {/* Browser Header Strip */}
+      <div className="flex items-center justify-between p-2 px-4 border-b border-white/5 bg-black/40 gap-4">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 text-[10px] tracking-widest text-[#00f2ff] font-bold uppercase">
+            <FolderOpen className="w-3.5 h-3.5" />
+            LIBRARY {tracks.length > 0 && `(${tracks.length})`}
+          </div>
+          <div className="flex items-center gap-1.5 text-[9px] font-mono text-white/40 bg-white/5 px-2 py-0.5 rounded border border-white/5">
+            <HardDrive className="w-3 h-3 text-emerald-400" />
+            <span>{storageInfo.usedMB} MB / IndexedDB</span>
+          </div>
         </div>
+
+        {/* Search Bar */}
+        <div className="flex-1 max-w-xs relative">
+          <Search className="w-3 h-3 text-white/40 absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <input 
+            type="text"
+            placeholder="Search library..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-black/40 border border-white/10 rounded-full pl-8 pr-3 py-1 text-[11px] font-mono text-white placeholder-white/30 focus:outline-none focus:border-[#00f2ff]/50"
+          />
+        </div>
+
         <div className="flex items-center gap-2">
           <button 
             onClick={handleDrivePicker}
@@ -250,57 +298,115 @@ export function MediaBrowser({ onLoadToDeck }: MediaBrowserProps) {
             className="flex items-center gap-2 text-[10px] uppercase font-mono px-3 py-1 bg-white/5 hover:bg-white/10 rounded border border-white/10 transition-colors disabled:opacity-50"
           >
             {isLoadingDrive ? <Loader2 className="w-3 h-3 animate-spin" /> : <Cloud className="w-3 h-3 text-[#00f2ff]" />}
-            Load from Drive
+            Google Drive
           </button>
           <button 
             onClick={() => fileInputRef.current?.click()}
             className="text-[10px] uppercase font-mono px-3 py-1 bg-white/5 hover:bg-white/10 rounded border border-white/10 transition-colors"
           >
-            Add Files / Folders
+            + Add Tracks
           </button>
+          {onClose && (
+            <button 
+              onClick={onClose}
+              className="flex items-center gap-1 text-[10px] uppercase font-mono px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded border border-white/10 text-white/60 hover:text-white transition-colors ml-1"
+              title="Collapse Library Drawer (Space)"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Hide</span>
+            </button>
+          )}
         </div>
         <input 
           type="file" 
           ref={fileInputRef} 
           className="hidden" 
           multiple 
-          //@ts-ignore - React typings might not have webkitdirectory
-          webkitdirectory="true"
-          directory="true"
+          accept="audio/*"
           onChange={(e) => handleFiles(e.target.files)} 
         />
       </div>
 
+      {/* Tracks Grid */}
       <div className="flex-1 overflow-y-auto p-2 no-scrollbar">
-        {files.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center opacity-30 pointer-events-none">
-            <FolderOpen className="w-8 h-8 mb-2" />
-            <span className="text-xs uppercase font-mono tracking-widest">Drop audio files or folders here</span>
+        {filteredTracks.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center opacity-30 pointer-events-none gap-2">
+            <FolderOpen className="w-8 h-8" />
+            <span className="text-xs uppercase font-mono tracking-widest">
+              {tracks.length === 0 ? "Drop audio files, folders or AI tracks here (Saved in IndexedDB)" : "No matching tracks"}
+            </span>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-            {files.map((file, idx) => (
-              <div key={idx} className="bg-white/5 hover:bg-white/10 border border-white/5 p-2 rounded flex items-center justify-between group">
-                <div className="flex items-center gap-3 overflow-hidden flex-1">
-                  <FileAudio className="w-4 h-4 opacity-50 shrink-0" />
-                  <span className="text-xs font-mono truncate opacity-90">{file.name}</span>
+            {filteredTracks.map((track) => {
+              const sizeMB = (track.size / (1024 * 1024)).toFixed(1);
+              const sourceColor = track.source === 'ai' ? '#ff0055' : track.source === 'drive' ? '#00f2ff' : '#a1a1aa';
+              const hasHotCues = track.hotCues && track.hotCues.some(c => c !== null);
+
+              return (
+                <div 
+                  key={track.id} 
+                  className="bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/20 p-2 rounded-lg flex items-center justify-between group transition-all"
+                >
+                  <div className="flex items-center gap-2.5 overflow-hidden flex-1">
+                    {track.source === 'ai' ? (
+                      <Sparkles className="w-4 h-4 text-[#ff0055] shrink-0" />
+                    ) : (
+                      <FileAudio className="w-4 h-4 opacity-50 shrink-0" />
+                    )}
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <span className="text-xs font-mono truncate text-white/90 group-hover:text-white" title={track.name}>
+                        {track.name}
+                      </span>
+                      <div className="flex items-center gap-2 text-[9px] font-mono opacity-50">
+                        <span style={{ color: sourceColor }} className="uppercase font-bold">
+                          {track.source}
+                        </span>
+                        <span>•</span>
+                        <span>{sizeMB} MB</span>
+                        {track.bpm && track.bpm > 0 && (
+                          <>
+                            <span>•</span>
+                            <span className="text-amber-400 font-bold">{track.bpm} BPM</span>
+                          </>
+                        )}
+                        {hasHotCues && (
+                          <>
+                            <span>•</span>
+                            <span className="text-emerald-400 font-bold">CUES</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                    <button 
+                      onClick={() => handleLoadTrack('A', track)}
+                      className="w-7 h-7 flex items-center justify-center bg-black/60 rounded text-[10px] font-bold text-[#00f2ff] hover:bg-[#00f2ff] hover:text-black border border-[#00f2ff]/30 transition-all active:scale-95"
+                      title="Load to Deck A"
+                    >
+                      A
+                    </button>
+                    <button 
+                      onClick={() => handleLoadTrack('B', track)}
+                      className="w-7 h-7 flex items-center justify-center bg-black/60 rounded text-[10px] font-bold text-[#ff0055] hover:bg-[#ff0055] hover:text-white border border-[#ff0055]/30 transition-all active:scale-95"
+                      title="Load to Deck B"
+                    >
+                      B
+                    </button>
+                    <button 
+                      onClick={(e) => handleDeleteTrack(track.id, e)}
+                      className="w-7 h-7 flex items-center justify-center rounded text-white/30 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                      title="Remove from Library"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-2">
-                  <button 
-                    onClick={() => onLoadToDeck('A', file)}
-                    className="w-6 h-6 flex items-center justify-center bg-black/40 rounded text-[9px] font-bold hover:text-[#00f2ff] hover:border-[#00f2ff] border border-transparent transition-all"
-                  >
-                    A
-                  </button>
-                  <button 
-                    onClick={() => onLoadToDeck('B', file)}
-                    className="w-6 h-6 flex items-center justify-center bg-black/40 rounded text-[9px] font-bold hover:text-[#00f2ff] hover:border-[#00f2ff] border border-transparent transition-all"
-                  >
-                    B
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
