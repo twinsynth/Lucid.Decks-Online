@@ -11,7 +11,7 @@ export interface StoredTrack {
   peaks?: number[];
   hotCues?: (number | null)[];
   dateAdded: number;
-  source: 'local' | 'drive' | 'ai';
+  source: 'local' | 'stream' | 'ai' | 'drive';
 }
 
 const DB_NAME = 'LucidDecksLibraryDB';
@@ -56,7 +56,7 @@ export async function saveTrackToDB(
     bpm?: number;
     peaks?: number[];
     hotCues?: (number | null)[];
-    source?: 'local' | 'drive' | 'ai';
+    source?: 'local' | 'stream' | 'ai' | 'drive';
   } = {}
 ): Promise<StoredTrack> {
   const db = await getDB();

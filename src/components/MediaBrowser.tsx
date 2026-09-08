@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { FolderOpen, FileAudio, Cloud, Loader2, Trash2, Search, HardDrive, Sparkles, ChevronDown } from 'lucide-react';
+import { FolderOpen, FileAudio, Trash2, Search, HardDrive, Sparkles, ChevronDown } from 'lucide-react';
 import { 
   saveTrackToDB, 
   getAllTracksFromDB, 
@@ -18,7 +18,6 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
   const [storageInfo, setStorageInfo] = useState<{ usedMB: string; quotaMB: string }>({ usedMB: '0.0', quotaMB: 'N/A' });
-  const [isLoadingDrive, setIsLoadingDrive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load tracks from IndexedDB on startup
@@ -37,7 +36,7 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
     }
   };
 
-  const addFilesToLibrary = async (filesToAdd: (File | Blob)[], source: 'local' | 'drive' | 'ai' = 'local') => {
+  const addFilesToLibrary = async (filesToAdd: (File | Blob)[], source: 'local' | 'stream' | 'ai' = 'local') => {
     for (const f of filesToAdd) {
       const name = f instanceof File ? f.name : `Track_${Date.now()}.wav`;
       // Check if already in library by name and size
@@ -72,114 +71,6 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
       ? track.blob 
       : new File([track.blob], track.name, { type: track.type || 'audio/mpeg' });
     onLoadToDeck(deck, file, track.id, track.hotCues);
-  };
-
-  const downloadDriveFile = async (id: string, accessToken: string, name: string, mimeType: string): Promise<File | null> => {
-    try {
-      const response = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
-      });
-      if (!response.ok) return null;
-      const blob = await response.blob();
-      return new File([blob], name, { type: mimeType });
-    } catch (err) {
-      console.error(`Error downloading ${name}`, err);
-      return null;
-    }
-  };
-
-  const handlePickedFiles = async (docs: any[], accessToken: string) => {
-    setIsLoadingDrive(true);
-    try {
-      const driveFiles: File[] = [];
-      for (const doc of docs) {
-        if (doc.mimeType === 'application/vnd.google-apps.folder') {
-          const folderId = doc.id;
-          const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&fields=files(id,name,mimeType)`;
-          const res = await fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` } });
-          const json = await res.json();
-          if (json.files) {
-            for (const f of json.files) {
-              if (f.mimeType.startsWith('audio/') || f.mimeType === 'video/mp4' || f.name.match(/\.(mp3|wav|flac|aac|ogg|m4a|aiff)$/i)) {
-                const file = await downloadDriveFile(f.id, accessToken, f.name, f.mimeType);
-                if (file) driveFiles.push(file);
-              }
-            }
-          }
-        } else {
-          const file = await downloadDriveFile(doc.id, accessToken, doc.name, doc.mimeType);
-          if (file) driveFiles.push(file);
-        }
-      }
-      
-      if (driveFiles.length > 0) {
-        await addFilesToLibrary(driveFiles, 'drive');
-      }
-    } catch (err) {
-      console.error("Error loading drive files:", err);
-    } finally {
-      setIsLoadingDrive(false);
-    }
-  };
-
-  const handleDrivePicker = () => {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    if (!clientId) {
-      alert("Google Client ID is missing. Please set VITE_GOOGLE_CLIENT_ID in your environment variables.");
-      return;
-    }
-
-    const g: any = (window as any).google;
-    const gapi: any = (window as any).gapi;
-
-    if (!g || !g.accounts) {
-      alert("Google Identity Services not loaded yet.");
-      return;
-    }
-
-    const client = g.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly',
-      callback: (tokenResponse: any) => {
-        if (tokenResponse.error !== undefined) {
-          console.error(tokenResponse);
-          return;
-        }
-        
-        const showPicker = (accessToken: string) => {
-          const pickerOrigin =
-            window.location.ancestorOrigins &&
-            window.location.ancestorOrigins.length > 0
-              ? window.location.ancestorOrigins[window.location.ancestorOrigins.length - 1]
-              : window.location.origin;
-
-          const view = new gapi.picker.DocsView(gapi.picker.ViewId.DOCS)
-            .setMimeTypes('audio/mpeg,audio/wav,audio/flac,audio/ogg,audio/x-m4a,audio/mp4,application/vnd.google-apps.folder,audio/aac')
-            .setIncludeFolders(true);
-
-          const picker = new gapi.picker.PickerBuilder()
-            .addView(view)
-            .setOAuthToken(accessToken)
-            .setCallback((data: any) => {
-              if (data.action === gapi.picker.Action.PICKED) {
-                handlePickedFiles(data.docs, accessToken);
-              }
-            })
-            .setOrigin(pickerOrigin)
-            .enableFeature(gapi.picker.Feature.MULTISELECT_ENABLED)
-            .build();
-          picker.setVisible(true);
-        };
-
-        if (!gapi.picker) {
-          gapi.load('picker', () => showPicker(tokenResponse.access_token));
-        } else {
-          showPicker(tokenResponse.access_token);
-        }
-      },
-    });
-    
-    client.requestAccessToken();
   };
 
   // Event listener for AI Lab track additions
@@ -293,17 +184,10 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
 
         <div className="flex items-center gap-2">
           <button 
-            onClick={handleDrivePicker}
-            disabled={isLoadingDrive}
-            className="flex items-center gap-2 text-[10px] uppercase font-mono px-3 py-1 bg-white/5 hover:bg-white/10 rounded border border-white/10 transition-colors disabled:opacity-50"
-          >
-            {isLoadingDrive ? <Loader2 className="w-3 h-3 animate-spin" /> : <Cloud className="w-3 h-3 text-[#00f2ff]" />}
-            Google Drive
-          </button>
-          <button 
             onClick={() => fileInputRef.current?.click()}
-            className="text-[10px] uppercase font-mono px-3 py-1 bg-white/5 hover:bg-white/10 rounded border border-white/10 transition-colors"
+            className="flex items-center gap-1.5 text-[10px] uppercase font-mono px-3 py-1 bg-[#00f2ff]/10 hover:bg-[#00f2ff]/20 text-[#00f2ff] rounded border border-[#00f2ff]/30 transition-colors"
           >
+            <FileAudio className="w-3 h-3" />
             + Add Tracks
           </button>
           {onClose && (
@@ -340,7 +224,7 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
             {filteredTracks.map((track) => {
               const sizeMB = (track.size / (1024 * 1024)).toFixed(1);
-              const sourceColor = track.source === 'ai' ? '#ff0055' : track.source === 'drive' ? '#00f2ff' : '#a1a1aa';
+              const sourceColor = track.source === 'ai' ? '#ff0055' : track.source === 'stream' ? '#00f2ff' : '#a1a1aa';
               const hasHotCues = track.hotCues && track.hotCues.some(c => c !== null);
 
               return (
