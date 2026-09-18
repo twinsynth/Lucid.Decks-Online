@@ -1,15 +1,13 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { 
   Play, Pause, Repeat, 
-  Music, FileAudio, Wrench, RefreshCw, ZoomIn, Move, Headphones, Volume2, Split, FolderOpen, Sliders, HelpCircle
+  Music, FileAudio, Wrench, RefreshCw, ZoomIn, Move, Headphones, Volume2, Split, FolderOpen
 } from 'lucide-react';
 import { getAudioEngine, OutputRoutingMode } from './lib/AudioEngine';
 import { initTraktorMIDI, TRAKTOR_S2_MAP, setMidiLearnTarget } from './lib/TraktorMIDI';
 import { updateTrackHotCuesInDB } from './lib/LibraryDB';
 import { MediaBrowser } from './components/MediaBrowser';
-import { SetupGuideModal } from './components/SetupGuideModal';
-import { EditSetupDock } from './components/EditSetupDock';
-import { BentoLayoutConfig, loadBentoConfig, saveBentoConfig, playSpringChirp } from './lib/BentoSpringEngine';
+import { AILab } from './components/AILab';
 import { BackgroundVisualizer, BgVisualizerMode } from './components/BackgroundVisualizer';
 
 export const MidiLearnContext = React.createContext<{
@@ -67,7 +65,7 @@ export function MidiControl({ midiKey, children }: { midiKey: string, children: 
   });
 }
 
-const HOT_CUE_COLORS = ['#00f2ff', '#10b981', '#f59e0b', '#ff0055', '#a855f7', '#3b82f6', '#84cc16', '#fb923c'];
+const HOT_CUE_COLORS = ['#00f2ff', '#10b981', '#f59e0b', '#ff0055'];
 
 const WaveformSVG = ({ 
   peaks, color, progress, height = 100, className = '', direction = 'center', thickness = 'solid',
@@ -319,8 +317,8 @@ export default function App() {
   const [deckBLoop, setDeckBLoop] = useState(false);
   const [deckAKeylock, setDeckAKeylock] = useState(false);
   const [deckBKeylock, setDeckBKeylock] = useState(false);
-  const [deckAHotCues, setDeckAHotCues] = useState<(number | null)[]>(Array(8).fill(null));
-  const [deckBHotCues, setDeckBHotCues] = useState<(number | null)[]>(Array(8).fill(null));
+  const [deckAHotCues, setDeckAHotCues] = useState<(number | null)[]>([null, null, null, null]);
+  const [deckBHotCues, setDeckBHotCues] = useState<(number | null)[]>([null, null, null, null]);
   
   // Mixer & Headphone PFL State
   const [crossfader, setCrossfader] = useState(0.5);
@@ -336,11 +334,9 @@ export default function App() {
   const fileInputARef = useRef<HTMLInputElement>(null);
   const fileInputBRef = useRef<HTMLInputElement>(null);
 
-  // Tools / Settings & Bento Layout State
+  // Tools / Settings State
   const [toolsOpen, setToolsOpen] = useState(false);
-  const [setupGuideOpen, setSetupGuideOpen] = useState(false);
-  const [editSetupOpen, setEditSetupOpen] = useState(false);
-  const [bentoConfig, setBentoConfig] = useState<BentoLayoutConfig>(loadBentoConfig);
+  const [aiLabOpen, setAiLabOpen] = useState(false);
   const [scale, setScale] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [translateX, setTranslateX] = useState(0);
@@ -353,10 +349,6 @@ export default function App() {
       if (e.code === 'Space') {
         e.preventDefault();
         setLibraryVisible(v => !v);
-      } else if (e.key === 'e' || e.key === 'E') {
-        setEditSetupOpen(v => !v);
-      } else if (e.key === '?') {
-        setSetupGuideOpen(v => !v);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -581,6 +573,18 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Output Mode Indicator Badge */}
+          <div 
+            onClick={() => setToolsOpen(true)}
+            className="flex items-center gap-1.5 text-[10px] font-mono px-2.5 py-1 rounded bg-white/5 border border-white/10 hover:border-white/30 cursor-pointer transition-colors"
+            title="Click to configure audio output in Settings"
+          >
+            <Headphones className="w-3 h-3 text-amber-400" />
+            <span className="text-white/60 uppercase">
+              {outputMode === 'split-lr' ? 'SPLIT L/R' : outputMode === '4-channel' ? '4-CH AUDIO' : 'STEREO'}
+            </span>
+          </div>
+
           <label className="flex items-center gap-2 text-xs font-mono cursor-pointer border border-white/20 px-3 py-1.5 rounded transition-colors hover:bg-white/10">
             <input 
               type="checkbox" 
@@ -608,7 +612,7 @@ export default function App() {
             </button>
           )}
 
-          <div className="relative ml-2 flex items-center gap-2.5">
+          <div className="relative ml-4 flex gap-4">
             <button 
               onClick={() => setLibraryVisible(!libraryVisible)}
               className={`flex items-center gap-1.5 text-xs font-mono uppercase px-3 py-1.5 rounded border transition-colors ${
@@ -622,40 +626,19 @@ export default function App() {
               <span>Library</span>
               <span className="text-[9px] opacity-40 font-mono hidden lg:inline">[Space]</span>
             </button>
-
             <button 
-              onClick={() => setEditSetupOpen(!editSetupOpen)}
-              className={`flex items-center gap-1.5 text-xs font-mono uppercase px-3 py-1.5 rounded border transition-all ${
-                editSetupOpen 
-                  ? 'bg-amber-400/20 border-amber-400 text-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.3)]' 
-                  : 'border-white/20 hover:border-white/50 text-white/70 hover:text-white'
-              }`}
-              title="Edit Setup / Layout Rig (E)"
+              onClick={() => setAiLabOpen(!aiLabOpen)}
+              className={`flex items-center gap-2 text-xs font-mono uppercase px-3 py-1.5 rounded border transition-colors ${aiLabOpen ? 'bg-[#00f2ff]/20 border-[#00f2ff] text-[#00f2ff]' : 'border-white/20 hover:border-[#00f2ff]/50 text-[#00f2ff]/70 hover:text-[#00f2ff]'}`}
             >
-              <Sliders className="w-3.5 h-3.5 text-amber-400" />
-              <span>Edit Rig</span>
-              <span className="text-[9px] opacity-40 font-mono hidden lg:inline">[E]</span>
+              <Music className="w-4 h-4" />
+              AI Lab
             </button>
-
             <button 
               onClick={() => setToolsOpen(!toolsOpen)}
               className={`flex items-center gap-2 text-xs font-mono uppercase px-3 py-1.5 rounded border transition-colors ${toolsOpen ? 'bg-white/10 border-white text-white' : 'border-white/20 hover:border-white/50 text-white/70 hover:text-white'}`}
             >
               <Wrench className="w-4 h-4" />
               Settings
-            </button>
-
-            {/* Quickstart & Hardware Setup Guide Button */}
-            <button 
-              onClick={() => setSetupGuideOpen(true)}
-              className={`flex items-center justify-center w-8 h-8 rounded border transition-colors ${
-                setupGuideOpen 
-                  ? 'bg-[#00f2ff]/20 border-[#00f2ff] text-[#00f2ff] shadow-[0_0_10px_rgba(0,242,255,0.4)]' 
-                  : 'border-white/20 hover:border-white/50 text-white/70 hover:text-white bg-white/5'
-              }`}
-              title="DJ Hardware & Quickstart Setup Guide (?)"
-            >
-              <HelpCircle className="w-4 h-4 text-[#00f2ff]" />
             </button>
 
             {/* Settings Modal */}
@@ -870,10 +853,6 @@ export default function App() {
             deckAPlay={deckAPlay} 
             deckBPlay={deckBPlay} 
           />
-          {/* Bento Blueprint Grid in Edit Rig Mode */}
-          {editSetupOpen && (
-            <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_center,rgba(0,242,255,0.08)_1px,transparent_1px)] bg-[size:20px_20px] z-20 border-2 border-dashed border-[#00f2ff]/30 m-2 rounded-2xl pointer-events-none" />
-          )}
           <div className="w-full h-full flex items-center justify-center transition-transform duration-200 z-10">
           <div 
             className={`flex gap-2 sm:gap-3 md:gap-4 max-w-7xl mx-auto w-full h-full items-center justify-center transition-all duration-300 min-w-0 ${
@@ -900,14 +879,10 @@ export default function App() {
               onHotCueClick={(idx: number, isDel: boolean) => handleHotCueClick('A', idx, isDel)}
               thickness={waveformThickness}
               isCompact={libraryVisible}
-              bentoConfig={bentoConfig}
             />
 
-            {/* Mixer - Dynamic Responsive Bento Width */}
-            <div 
-              className={`shrink-0 bg-neutral-900/50 rounded-2xl border border-white/5 flex flex-col justify-between items-center h-full transition-all duration-300 ${libraryVisible ? 'p-2.5' : 'p-3 sm:p-4 md:p-5'}`}
-              style={{ width: `${bentoConfig.mixerWidth}px` }}
-            >
+            {/* Mixer - Responsive width to prevent clipping on narrower displays */}
+            <div className={`w-64 sm:w-72 md:w-76 lg:w-80 xl:w-84 shrink-0 bg-neutral-900/50 rounded-2xl border border-white/5 flex flex-col justify-between items-center h-full transition-all duration-300 ${libraryVisible ? 'p-2.5' : 'p-3 sm:p-4 md:p-5'}`}>
               <h2 className={`text-[10px] font-bold tracking-[0.2em] opacity-50 shrink-0 ${libraryVisible ? 'mb-1.5' : 'mb-3'}`}>MIXER</h2>
               
               <div className="flex-1 flex justify-between items-stretch w-full px-2 relative min-h-0">
@@ -944,66 +919,50 @@ export default function App() {
                             setDeckAVol(val);
                             getAudioEngine().deckA.setVolume(val);
                           }}
-                          className="fader-vertical w-3 h-full bg-black rounded-full border border-white/10"
+                          className="fader-vertical accent-custom absolute w-[100px] h-3 bg-black border border-white/10 rounded-full"
+                          style={{ transform: 'rotate(-90deg)', '--fader-color': deckAColor } as React.CSSProperties}
                         />
                       </div>
                     </MidiControl>
                   </div>
                 </div>
 
-                {/* Center Master/Cue Section */}
-                <div className="flex flex-col items-center justify-between py-2 border-x border-white/5 px-2">
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="flex flex-col items-center">
-                      <span className="text-[9px] font-mono font-bold opacity-60 mb-1">MASTER</span>
-                      <MidiControl midiKey="MASTER_VOLUME">
-                        <input 
-                          type="range" min="0" max="1" step="0.01" 
-                          value={masterVol} 
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            setMasterVol(val);
-                            getAudioEngine().setMasterVolume(val);
-                          }}
-                          className="w-16 accent-white cursor-pointer h-1.5 bg-neutral-800 rounded-lg"
-                        />
-                      </MidiControl>
-                    </div>
-
-                    <div className="flex flex-col items-center">
-                      <span className="text-[9px] font-mono font-bold text-amber-400 opacity-80 mb-1">HEADPHONES</span>
-                      <MidiControl midiKey="HEADPHONES_VOLUME">
-                        <input 
-                          type="range" min="0" max="1" step="0.01" 
+                {/* Central Column: VU Meters + Headphone Controls */}
+                <div className="flex-1 flex flex-col items-center justify-start gap-1 sm:gap-1.5 h-full pt-0 px-1 sm:px-1.5 min-w-0 min-h-0">
+                  {/* Headphone PFL Section */}
+                  <div className={`flex flex-col items-center gap-1 rounded-xl bg-black/40 border border-white/5 w-full shrink-0 ${libraryVisible ? 'p-1.5' : 'p-2'}`}>
+                    <span className="text-[8px] font-mono tracking-widest text-amber-400 font-bold uppercase flex items-center gap-1">
+                      <Headphones className="w-3 h-3" /> CUE / PFL
+                    </span>
+                    <div className="flex items-center justify-around w-full gap-2">
+                      <MidiControl midiKey="HEADPHONE_VOLUME">
+                        <Knob 
+                          label="VOL" 
                           value={cueVol} 
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            setCueVol(val);
-                            getAudioEngine().setCueVolume(val);
-                          }}
-                          className="w-16 accent-amber-400 cursor-pointer h-1.5 bg-neutral-800 rounded-lg"
+                          onChange={(v) => {
+                            setCueVol(v);
+                            getAudioEngine().setCueVolume(v);
+                          }} 
+                          accent 
+                          color="#f59e0b" 
                         />
                       </MidiControl>
-                    </div>
-
-                    <div className="flex flex-col items-center">
-                      <span className="text-[8px] font-mono opacity-40 mb-1">CUE / MST MIX</span>
-                      <MidiControl midiKey="HEADPHONES_MIX">
-                        <input 
-                          type="range" min="0" max="1" step="0.01" 
+                      <MidiControl midiKey="CUE_MIX">
+                        <Knob 
+                          label="MIX" 
                           value={cueMix} 
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            setCueMix(val);
-                            getAudioEngine().setCueMix(val);
-                          }}
-                          className="w-14 accent-amber-400 cursor-pointer h-1 bg-neutral-800 rounded-lg"
+                          onChange={(v) => {
+                            setCueMix(v);
+                            getAudioEngine().setCueMix(v);
+                          }} 
+                          accent 
+                          color="#f59e0b" 
                         />
                       </MidiControl>
                     </div>
                   </div>
 
-                  {/* Dual Channel VU Meters */}
+                  {/* Full-Height Pro Master/Channel Levels Visualizer spanning right to X-FADER */}
                   <DualChannelVuMeter colorA={deckAColor} colorB={deckBColor} isCompact={libraryVisible} />
                 </div>
 
@@ -1039,7 +998,8 @@ export default function App() {
                             setDeckBVol(val);
                             getAudioEngine().deckB.setVolume(val);
                           }}
-                          className="fader-vertical w-3 h-full bg-black rounded-full border border-white/10"
+                          className="fader-vertical accent-custom absolute w-[100px] h-3 bg-black border border-white/10 rounded-full"
+                          style={{ transform: 'rotate(-90deg)', '--fader-color': deckBColor } as React.CSSProperties}
                         />
                       </div>
                     </MidiControl>
@@ -1049,14 +1009,14 @@ export default function App() {
               </div>
 
               {/* Crossfader */}
-              <div className="w-full px-4 pt-2 pb-1 border-t border-white/5 flex flex-col items-center">
-                <div className="flex justify-between w-full text-[8px] font-mono opacity-40 px-1 mb-1 font-bold">
+              <div className={`w-full shrink-0 ${libraryVisible ? 'mt-2' : 'mt-3 sm:mt-4'}`}>
+                <div className="flex justify-between text-[9px] opacity-40 font-mono mb-1 font-bold">
                   <span style={{ color: deckAColor }}>A</span>
-                  <span>CROSSFADER</span>
+                  <span>X-FADER</span>
                   <span style={{ color: deckBColor }}>B</span>
                 </div>
                 <MidiControl midiKey="CROSSFADER">
-                  <div className="w-full flex items-center justify-center h-8 relative">
+                  <div className="relative w-full px-4 h-8 flex items-center justify-center">
                     <input 
                       type="range" min="0" max="1" step="0.01" 
                       value={crossfader} 
@@ -1089,7 +1049,6 @@ export default function App() {
               onHotCueClick={(idx: number, isDel: boolean) => handleHotCueClick('B', idx, isDel)}
               thickness={waveformThickness}
               isCompact={libraryVisible}
-              bentoConfig={bentoConfig}
             />
           </div>
         </div>
@@ -1105,22 +1064,11 @@ export default function App() {
         <MediaBrowser onLoadToDeck={handleLoadDeck} onClose={() => setLibraryVisible(false)} />
       </div>
 
-      {/* Hardware & Quickstart Setup Guide Modal */}
-      <SetupGuideModal 
-        isOpen={setupGuideOpen} 
-        onClose={() => setSetupGuideOpen(false)} 
-        onOpenSettings={() => { setSetupGuideOpen(false); setToolsOpen(true); }}
-      />
-
-      {/* Floating Bento Setup Physics Dock */}
-      <EditSetupDock 
-        isOpen={editSetupOpen} 
-        onClose={() => setEditSetupOpen(false)} 
-        config={bentoConfig} 
-        onChange={(newConfig) => {
-          setBentoConfig(newConfig);
-          saveBentoConfig(newConfig);
-          playSpringChirp();
+      <AILab 
+        isOpen={aiLabOpen} 
+        onClose={() => setAiLabOpen(false)} 
+        onAddTrack={(file) => {
+          window.dispatchEvent(new CustomEvent('dj-add-file', { detail: { file } }));
         }} 
       />
 
@@ -1383,8 +1331,7 @@ function DualChannelVuMeter({
 function Deck({ 
   id, theme, file, isPlaying, isLooping, keylock, hotCues,
   onLoadClick, onPlay, onCue, onLoop, onKeylock, onHotCueClick, thickness,
-  isCompact = false,
-  bentoConfig
+  isCompact = false
 }: any) {
   const [pitch, setPitch] = useState(0.5);
   const [progress, setProgress] = useState(0);
@@ -1421,36 +1368,27 @@ function Deck({
 
       if (availW <= 10 || availH <= 10) return;
 
-      const jogMode = bentoConfig?.jogMode || 'backseat';
-
       // Adaptive gap: 6px on tight screens, up to 20px on spacious screens
       const targetGap = Math.round(Math.max(6, Math.min(20, availW * 0.035)));
 
       // Adaptive pitch fader width: 34px to 52px
       const targetPitchWidth = Math.round(Math.max(34, Math.min(52, availW * 0.135)));
 
-      let jogSize = 0;
-      let pitchHeight = Math.round(Math.max(120, Math.min(240, availH - 8)));
+      // Calculate maximum jog wheel diameter without overflowing container
+      // 16px buffer preserves comfortable margin from deck border
+      const maxW = availW - targetPitchWidth - targetGap - 16;
+      const maxH = availH - 8;
 
-      if (jogMode === 'hidden') {
-        jogSize = 0;
-      } else if (jogMode === 'minimal') {
-        jogSize = 64;
-      } else if (jogMode === 'backseat') {
-        // Backseat mode: jog wheels take a back seat! Compact 92px disc, pitch fader remains tall
-        jogSize = Math.round(Math.max(76, Math.min(100, availH * 0.52)));
-      } else {
-        // 'classic' CDJ platter
-        const maxW = availW - targetPitchWidth - targetGap - 16;
-        const maxH = availH - 8;
-        jogSize = Math.round(Math.max(100, Math.min(280, Math.min(maxW, maxH))));
-        pitchHeight = jogSize;
-      }
+      // Jog wheel diameter bounded by both available width and height (clamped 95px - 280px)
+      const jogSize = Math.round(Math.max(95, Math.min(280, Math.min(maxW, maxH))));
 
-      // Pitch fader width scales smoothly
-      const pitchWidth = Math.round(Math.max(34, Math.min(52, targetPitchWidth)));
+      // Pitch fader height matches jog wheel diameter for balanced CDJ aesthetics
+      const pitchHeight = jogSize;
 
-      // Slider track throw length fits inside pitchHeight leaving space for labels & buttons
+      // Pitch fader width scales smoothly with jog size
+      const pitchWidth = Math.round(Math.max(34, Math.min(52, Math.min(targetPitchWidth, jogSize * 0.22))));
+
+      // Slider track throw length fits inside pitchHeight leaving space for labels, MT button, and % readout
       const sliderLength = Math.round(Math.max(48, Math.min(185, pitchHeight - 62)));
 
       setDims({
@@ -1474,7 +1412,7 @@ function Deck({
       ro.disconnect();
       window.removeEventListener('resize', updateDims);
     };
-  }, [isCompact, bentoConfig?.jogMode]);
+  }, [isCompact]);
 
   useEffect(() => {
     const engine = getAudioEngine();
@@ -1745,46 +1683,42 @@ function Deck({
         style={{ gap: `${dims.gap}px` }}
       >
         {/* Jog Wheel (Vinyl) - Dynamically Scaled Platter with MIDI Learn */}
-        {dims.jogSize > 0 && (
-          <div className="flex items-center justify-center shrink-0">
-            <MidiControl midiKey={id === 'A' ? 'DECK_A_JOG_TURN' : 'DECK_B_JOG_TURN'}>
+        <div className="flex items-center justify-center shrink-0">
+          <MidiControl midiKey={id === 'A' ? 'DECK_A_JOG_TURN' : 'DECK_B_JOG_TURN'}>
+            <div 
+              className={`rounded-full border-4 flex items-center justify-center relative transition-colors duration-150 shrink-0 cursor-grab active:cursor-grabbing ${isPlaying ? 'bg-black/40' : 'border-white/5 bg-black/20'}`} 
+              style={{
+                width: `${dims.jogSize}px`,
+                height: `${dims.jogSize}px`,
+                ...(isPlaying ? { borderColor: theme, boxShadow: `0 0 90px ${theme}60, inset 0 0 45px ${theme}40` } : {})
+              }}
+              onPointerDown={handleJogPointerDown}
+              onPointerMove={handleJogPointerMove}
+              onPointerUp={handleJogPointerUp}
+              onPointerCancel={handleJogPointerUp}
+            >
+              {isPlaying && (
+                <div className="absolute inset-0 rounded-full animate-ping opacity-30 pointer-events-none" style={{ backgroundColor: theme, animationDuration: '2s' }} />
+              )}
+              {/* Outer vinyl grooved platter ring - 78% of diameter */}
               <div 
-                className={`rounded-full border-4 flex items-center justify-center relative transition-colors duration-150 shrink-0 cursor-grab active:cursor-grabbing ${isPlaying ? 'bg-black/40' : 'border-white/5 bg-black/20'}`} 
-                style={{
-                  width: `${dims.jogSize}px`,
-                  height: `${dims.jogSize}px`,
-                  ...(isPlaying ? { borderColor: theme, boxShadow: `0 0 90px ${theme}60, inset 0 0 45px ${theme}40` } : {})
-                }}
-                onPointerDown={handleJogPointerDown}
-                onPointerMove={handleJogPointerMove}
-                onPointerUp={handleJogPointerUp}
-                onPointerCancel={handleJogPointerUp}
+                className={`w-[78%] h-[78%] rounded-full border-2 border-dashed transition-opacity duration-150 ${isPlaying ? 'border-opacity-80' : 'border-white/20'}`} 
+                style={{ borderColor: isPlaying ? theme : undefined, transform: `rotate(${rotation}deg)` }}
               >
-                {isPlaying && (
-                  <div className="absolute inset-0 rounded-full animate-ping opacity-30 pointer-events-none" style={{ backgroundColor: theme, animationDuration: '2s' }} />
-                )}
-                {/* Outer vinyl grooved platter ring - 78% of diameter */}
-                <div 
-                  className={`w-[78%] h-[78%] rounded-full border-2 border-dashed transition-opacity duration-150 ${isPlaying ? 'border-opacity-80' : 'border-white/20'}`} 
-                  style={{ borderColor: isPlaying ? theme : undefined, transform: `rotate(${rotation}deg)` }}
-                >
-                  <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full absolute top-1 sm:top-1.5 left-1/2 -translate-x-1/2" style={{ backgroundColor: theme, boxShadow: `0 0 20px ${theme}` }} />
-                </div>
-                {/* Center Spindle Hub with Vinyl Label */}
-                <div 
-                  className="absolute w-[28%] h-[28%] min-w-[26px] min-h-[26px] max-w-[72px] max-h-[72px] rounded-full bg-gradient-to-br from-neutral-800 to-black border border-white/20 flex flex-col items-center justify-center shadow-lg pointer-events-none select-none"
-                >
-                  <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-black border border-white/30 mb-0.5" />
-                  {dims.jogSize > 85 && (
-                    <div className="text-[6.5px] sm:text-[7.5px] font-mono font-bold opacity-40 text-center tracking-wider leading-none">
-                      VINYL<br/>CTRL
-                    </div>
-                  )}
+                <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full absolute top-1 sm:top-1.5 left-1/2 -translate-x-1/2" style={{ backgroundColor: theme, boxShadow: `0 0 20px ${theme}` }} />
+              </div>
+              {/* Center Spindle Hub with Vinyl Label - 28% of diameter */}
+              <div 
+                className="absolute w-[28%] h-[28%] min-w-[40px] min-h-[40px] max-w-[72px] max-h-[72px] rounded-full bg-gradient-to-br from-neutral-800 to-black border border-white/20 flex flex-col items-center justify-center shadow-lg pointer-events-none select-none"
+              >
+                <div className="w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full bg-black border border-white/30 mb-0.5" />
+                <div className="text-[7px] sm:text-[8px] font-mono font-bold opacity-40 text-center tracking-wider leading-none">
+                  VINYL<br/>CTRL
                 </div>
               </div>
-            </MidiControl>
-          </div>
-        )}
+            </div>
+          </MidiControl>
+        </div>
 
         {/* Vertical Pitch Fader Strip (Dynamically Adjusted Width & Height alongside Vinyl) */}
         <div 
@@ -1863,9 +1797,9 @@ function Deck({
             </button>
           </div>
 
-          {/* Performance Pads - 4 or 8 Pads based on Bento Config */}
-          <div className={`grid ${bentoConfig?.padsMode === '8-pads' ? 'grid-cols-4 gap-1 sm:gap-1.5' : 'grid-cols-4 gap-1.5 sm:gap-2'} w-full`}>
-            {HOT_CUE_COLORS.slice(0, bentoConfig?.padsMode === '8-pads' ? 8 : 4).map((padColor, idx) => {
+          {/* 4 Compact Performance Pads - Exactly 4 columns */}
+          <div className="grid grid-cols-4 gap-1.5 sm:gap-2 w-full">
+            {HOT_CUE_COLORS.map((padColor, idx) => {
               const cueTime = hotCues[idx];
               const isSet = cueTime !== null && cueTime !== undefined;
               const formattedTime = isSet 
@@ -1876,7 +1810,7 @@ function Deck({
                 <MidiControl key={idx} midiKey={id === 'A' ? `DECK_A_HOTCUE_${idx + 1}` : `DECK_B_HOTCUE_${idx + 1}`}>
                   <button
                     onClick={() => onHotCueClick(idx, delMode)}
-                    className={`${isCompact || bentoConfig?.padsMode === '8-pads' ? 'h-7 sm:h-7.5' : 'h-8 sm:h-9'} rounded-lg border flex flex-col items-center justify-center relative transition-all active:scale-95 group select-none ${
+                    className={`${isCompact ? 'h-7.5 sm:h-8' : 'h-8 sm:h-9'} rounded-lg border flex flex-col items-center justify-center relative transition-all active:scale-95 group select-none ${
                       isSet 
                         ? 'bg-black/60 shadow-md' 
                         : 'bg-black/30 border-white/10 hover:border-white/30 text-white/30 hover:text-white/70'
@@ -1900,7 +1834,6 @@ function Deck({
             })}
           </div>
         </div>
-
 
         {/* Transport Row - Exactly 4 columns, matching the exact width & column gaps of Hot Cues above! */}
         <div className="grid grid-cols-4 gap-1.5 sm:gap-2 w-full">

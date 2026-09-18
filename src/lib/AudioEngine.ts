@@ -35,7 +35,7 @@ export class Deck {
   
   // Cue & Loop State
   cuePoint: number = 0;
-  hotCues: (number | null)[] = Array(8).fill(null); // 8 colored performance pads
+  hotCues: (number | null)[] = [null, null, null, null]; // 4 colored performance pads
   loopEnabled: boolean = false;
   loopStart: number = 0;
   loopEnd: number = 0;
@@ -117,9 +117,9 @@ export class Deck {
     this.stop();
     this.trackId = trackId || (file instanceof File ? file.name : null);
     if (initialHotCues) {
-      this.hotCues = Array.from({ length: 8 }, (_, i) => initialHotCues[i] ?? null);
+      this.hotCues = [...initialHotCues];
     } else {
-      this.hotCues = Array(8).fill(null);
+      this.hotCues = [null, null, null, null];
     }
 
     if (this.currentUrl) URL.revokeObjectURL(this.currentUrl);
