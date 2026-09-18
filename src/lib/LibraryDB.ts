@@ -3,6 +3,8 @@
 export interface StoredTrack {
   id: string;
   name: string;
+  artist?: string;
+  artworkUrl?: string;
   size: number;
   type: string;
   blob: Blob;
@@ -52,6 +54,8 @@ export async function saveTrackToDB(
   metadata: {
     id?: string;
     name?: string;
+    artist?: string;
+    artworkUrl?: string;
     duration?: number;
     bpm?: number;
     peaks?: number[];
@@ -66,6 +70,8 @@ export async function saveTrackToDB(
   const track: StoredTrack = {
     id,
     name,
+    artist: metadata.artist,
+    artworkUrl: metadata.artworkUrl,
     size: fileOrBlob.size,
     type: fileOrBlob.type || 'audio/mpeg',
     blob: fileOrBlob,
