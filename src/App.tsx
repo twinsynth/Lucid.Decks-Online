@@ -569,8 +569,11 @@ export default function App() {
       <header className="h-14 border-b border-white/10 bg-black/40 flex items-center justify-between px-6 shrink-0 relative z-50">
         <div className="flex items-center gap-3">
           <Music className="w-5 h-5 text-white/50" />
-          <h1 className="font-bold tracking-widest text-sm uppercase">
-            <span className="text-[#00f2ff]">LUCID</span> <span className="text-[#ff0055]">DECKS</span>
+          <h1 
+            className="tracking-wider select-none flex items-baseline font-audiowide text-base sm:text-lg font-normal leading-none"
+            style={{ fontFamily: "'Audiowide', cursive, sans-serif" }}
+          >
+            <span className="text-[#00f2ff] drop-shadow-[0_0_8px_rgba(0,242,255,0.4)]">LUCID</span><span className="text-[#ff0055] drop-shadow-[0_0_8px_rgba(255,0,85,0.4)]">DECKS</span><span className="text-white/60 text-xs sm:text-[13px] tracking-normal font-mono lowercase">.online</span>
           </h1>
         </div>
 
