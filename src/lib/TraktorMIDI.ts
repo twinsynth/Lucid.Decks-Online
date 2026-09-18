@@ -19,6 +19,10 @@ export let TRAKTOR_S2_MAP: Record<string, number | string> = {
   DECK_A_HOTCUE_2: 0x41,
   DECK_A_HOTCUE_3: 0x42,
   DECK_A_HOTCUE_4: 0x43,
+  DECK_A_HOTCUE_5: 0x44,
+  DECK_A_HOTCUE_6: 0x45,
+  DECK_A_HOTCUE_7: 0x46,
+  DECK_A_HOTCUE_8: 0x47,
 
   // Deck A Jog Wheel (Traktor S2 Defaults)
   DECK_A_JOG_TURN: 0x19,
@@ -45,6 +49,10 @@ export let TRAKTOR_S2_MAP: Record<string, number | string> = {
   DECK_B_HOTCUE_2: 0x51,
   DECK_B_HOTCUE_3: 0x52,
   DECK_B_HOTCUE_4: 0x53,
+  DECK_B_HOTCUE_5: 0x54,
+  DECK_B_HOTCUE_6: 0x55,
+  DECK_B_HOTCUE_7: 0x56,
+  DECK_B_HOTCUE_8: 0x57,
 
   // Deck B Jog Wheel (Traktor S2 Defaults)
   DECK_B_JOG_TURN: 0x1A,
@@ -204,6 +212,18 @@ function onMidiMessage(event: any) {
     case 'DECK_A_HOTCUE_4':
       if (isPress) engine.deckA.jumpToHotCue(3);
       break;
+    case 'DECK_A_HOTCUE_5':
+      if (isPress) engine.deckA.jumpToHotCue(4);
+      break;
+    case 'DECK_A_HOTCUE_6':
+      if (isPress) engine.deckA.jumpToHotCue(5);
+      break;
+    case 'DECK_A_HOTCUE_7':
+      if (isPress) engine.deckA.jumpToHotCue(6);
+      break;
+    case 'DECK_A_HOTCUE_8':
+      if (isPress) engine.deckA.jumpToHotCue(7);
+      break;
 
     // Deck A Jog Wheel
     case 'DECK_A_JOG_TURN': {
@@ -285,6 +305,18 @@ function onMidiMessage(event: any) {
       break;
     case 'DECK_B_HOTCUE_4':
       if (isPress) engine.deckB.jumpToHotCue(3);
+      break;
+    case 'DECK_B_HOTCUE_5':
+      if (isPress) engine.deckB.jumpToHotCue(4);
+      break;
+    case 'DECK_B_HOTCUE_6':
+      if (isPress) engine.deckB.jumpToHotCue(5);
+      break;
+    case 'DECK_B_HOTCUE_7':
+      if (isPress) engine.deckB.jumpToHotCue(6);
+      break;
+    case 'DECK_B_HOTCUE_8':
+      if (isPress) engine.deckB.jumpToHotCue(7);
       break;
 
     // Deck B Jog Wheel
