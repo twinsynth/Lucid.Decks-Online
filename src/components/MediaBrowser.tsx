@@ -10,6 +10,17 @@ import {
   StoredTrack, 
   getStorageEstimate 
 } from '../lib/LibraryDB';
+import { generateDemoTrackA, generateDemoTrackB } from '../lib/DemoTracks';
+
+export function getBackendBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const custom = localStorage.getItem('lucid_decks_backend_url');
+    if (custom && custom.trim()) {
+      return custom.trim().replace(/\/+$/, '');
+    }
+  }
+  return '';
+}
 
 interface SoundCloudTrack {
   id: number;
@@ -61,6 +72,7 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
   const [scSavingTrackId, setScSavingTrackId] = useState<number | null>(null);
   const [scError, setScError] = useState<string | null>(null);
   const [hasSearchedSc, setHasSearchedSc] = useState(false);
+  const [isGeneratingDemo, setIsGeneratingDemo] = useState(false);
 
   // Load tracks from IndexedDB on startup
   useEffect(() => {
@@ -81,26 +93,31 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
       const est = await getStorageEstimate();
       setStorageInfo(est);
     } catch (err) {
-      console.error('Failed to load library from IndexedDB:', err);
+      console.error('Failed to load library:', err);
     }
   };
 
-  const addFilesToLibrary = async (filesToAdd: (File | Blob)[], source: 'local' | 'stream' | 'ai' = 'local') => {
-    for (const f of filesToAdd) {
-      const name = f instanceof File ? f.name : `Track_${Date.now()}.wav`;
-      const exists = tracks.some(t => t.name === name && t.size === f.size);
-      if (!exists) {
-        try {
-          const saved = await saveTrackToDB(f, { name, source });
-          setTracks(prev => [saved, ...prev]);
-        } catch (err) {
-          console.error('Failed to save track to IndexedDB:', err);
-        }
-      }
+  const handleLoadDemoCrate = async () => {
+    setIsGeneratingDemo(true);
+    try {
+      const fileA = await generateDemoTrackA();
+      const fileB = await generateDemoTrackB();
+      
+      const trackA = await saveTrackToDB(fileA, { bpm: 124, source: 'crate' });
+      const trackB = await saveTrackToDB(fileB, { bpm: 126, source: 'crate' });
+
+      await loadLibrary();
+
+      // Automatically load to Deck A and Deck B
+      onLoadToDeck('A', fileA, trackA.id);
+      onLoadToDeck('B', fileB, trackB.id);
+    } catch (err) {
+      console.error('Failed to generate demo tracks:', err);
+    } finally {
+      setIsGeneratingDemo(false);
     }
-    const est = await getStorageEstimate();
-    setStorageInfo(est);
   };
+
 
   const handleDeleteTrack = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -122,13 +139,18 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
   };
 
   // Safe API Fetcher to prevent "Unexpected token '<', <!DOCTYPE... is not valid JSON" on static hosts
-  const fetchSafeJson = async (url: string) => {
+  const fetchSafeJson = async (path: string) => {
+    const base = getBackendBaseUrl();
+    const url = `${base}${path}`;
     const res = await fetch(url);
     const contentType = res.headers.get('content-type') || '';
     if (!res.ok || !contentType.includes('application/json')) {
       if (res.status === 404 || contentType.includes('text/html')) {
+        const isStaticHost = typeof window !== 'undefined' && window.location.hostname.includes('github.io');
         throw new Error(
-          'SoundCloud live searching requires the Lucid Decks Node backend server. If you are on GitHub Pages or a static host, please run "npm run dev" locally or switch to "My Crate" for local files.'
+          isStaticHost
+            ? 'SoundCloud live searching requires the Lucid Decks Node backend server. GitHub Pages is a static host (no server). Run "npm run dev" locally or switch to "My Crate" for instant offline mixing.'
+            : 'SoundCloud live searching requires the Lucid Decks Node backend server. If you are on GitHub Pages or a static host, please run "npm run dev" locally or switch to "My Crate" for local files.'
         );
       }
       const text = await res.text();
@@ -173,7 +195,8 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
   const handleLoadSoundCloudTrack = async (deck: 'A' | 'B', track: SoundCloudTrack) => {
     setScLoadingTrack({ id: track.id, deck });
     try {
-      const streamUrl = `/api/soundcloud/stream?transcodingUrl=${encodeURIComponent(track.streamTranscodingUrl)}&trackAuth=${encodeURIComponent(track.trackAuth || '')}`;
+      const base = getBackendBaseUrl();
+      const streamUrl = `${base}/api/soundcloud/stream?transcodingUrl=${encodeURIComponent(track.streamTranscodingUrl)}&trackAuth=${encodeURIComponent(track.trackAuth || '')}`;
       const res = await fetch(streamUrl);
       const contentType = res.headers.get('content-type') || '';
       if (!res.ok || contentType.includes('text/html')) {
@@ -196,7 +219,8 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
   const handleSaveSoundCloudToCrate = async (track: SoundCloudTrack) => {
     setScSavingTrackId(track.id);
     try {
-      const streamUrl = `/api/soundcloud/stream?transcodingUrl=${encodeURIComponent(track.streamTranscodingUrl)}&trackAuth=${encodeURIComponent(track.trackAuth || '')}`;
+      const base = getBackendBaseUrl();
+      const streamUrl = `${base}/api/soundcloud/stream?transcodingUrl=${encodeURIComponent(track.streamTranscodingUrl)}&trackAuth=${encodeURIComponent(track.trackAuth || '')}`;
       const res = await fetch(streamUrl);
       const contentType = res.headers.get('content-type') || '';
       if (!res.ok || contentType.includes('text/html')) {
@@ -442,11 +466,26 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
         {activeTab === 'crate' ? (
           /* TAB 1: LOCAL CRATE (INDEXEDDB) */
           filteredTracks.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center opacity-30 pointer-events-none gap-2">
-              <FolderOpen className="w-8 h-8" />
-              <span className="text-xs uppercase font-mono tracking-widest">
-                {tracks.length === 0 ? "Drop audio files, folders or AI tracks here (Saved in IndexedDB)" : "No matching tracks"}
-              </span>
+            <div className="h-full flex flex-col items-center justify-center gap-2.5 p-4 text-center">
+              <div className="p-3 rounded-2xl bg-white/5 border border-white/10 flex flex-col items-center gap-2 max-w-md">
+                <FolderOpen className="w-8 h-8 text-[#00f2ff] opacity-80" />
+                <span className="text-xs font-mono uppercase tracking-wider text-white/90 font-bold">
+                  {tracks.length === 0 ? "Your Crate is Empty" : "No matching tracks"}
+                </span>
+                <p className="text-[11px] font-mono text-white/50 leading-normal">
+                  Drop local audio files (MP3, WAV, FLAC, OGG, AAC) anywhere on screen, or load our instant offline demo tracks!
+                </p>
+                {tracks.length === 0 && (
+                  <button 
+                    onClick={handleLoadDemoCrate}
+                    disabled={isGeneratingDemo}
+                    className="mt-1 flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-[#00f2ff]/20 to-[#ff0055]/20 border border-[#00f2ff]/50 hover:border-[#00f2ff] text-white text-xs font-mono font-bold transition-all shadow-md active:scale-95 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-[#00f2ff]" />
+                    <span>{isGeneratingDemo ? 'Synthesizing Audio...' : 'Load Demo Tracks (124 & 126 BPM)'}</span>
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -544,23 +583,31 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
               </span>
             </div>
           ) : scError ? (
-            <div className="h-full flex flex-col items-center justify-center text-red-400 gap-2.5 p-4 text-center">
+            <div className="h-full flex flex-col items-center justify-center text-red-400 gap-2.5 p-4 text-center max-w-xl mx-auto">
               <div className="p-2 rounded-full bg-amber-500/10 border border-amber-500/30">
                 <AlertTriangle className="w-5 h-5 text-amber-400" />
               </div>
-              <span className="text-xs font-mono text-white/90 max-w-md leading-relaxed">{scError}</span>
-              <div className="flex gap-2 mt-1">
+              <span className="text-xs font-mono text-white/90 leading-relaxed font-medium">{scError}</span>
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
+                <button 
+                  onClick={handleLoadDemoCrate}
+                  disabled={isGeneratingDemo}
+                  className="text-[10px] uppercase font-mono px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded-md border border-emerald-500/40 transition-all font-bold flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>{isGeneratingDemo ? 'Synthesizing...' : 'Load Demo Crate (Offline)'}</span>
+                </button>
+                <button 
+                  onClick={() => setActiveTab('crate')}
+                  className="text-[10px] uppercase font-mono px-3 py-1.5 bg-[#00f2ff]/20 hover:bg-[#00f2ff]/30 text-[#00f2ff] rounded-md border border-[#00f2ff]/40 transition-colors font-bold"
+                >
+                  Switch to My Crate (Local Files)
+                </button>
                 <button 
                   onClick={() => handleSoundCloudSearch()}
                   className="text-[10px] uppercase font-mono px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-md border border-white/20 text-white transition-colors"
                 >
                   Retry Search
-                </button>
-                <button 
-                  onClick={() => setActiveTab('local')}
-                  className="text-[10px] uppercase font-mono px-3 py-1.5 bg-[#00f2ff]/20 hover:bg-[#00f2ff]/30 text-[#00f2ff] rounded-md border border-[#00f2ff]/40 transition-colors font-bold"
-                >
-                  Switch to My Crate (Local Files)
                 </button>
               </div>
             </div>
