@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { 
   Play, Pause, Repeat, 
-  Music, FileAudio, Wrench, RefreshCw, ZoomIn, Move, Headphones, Volume2, Split, FolderOpen, Sliders, HelpCircle, Cloud
+  Music, FileAudio, Wrench, RefreshCw, ZoomIn, Move, Headphones, Volume2, Split, FolderOpen, Sliders, HelpCircle
 } from 'lucide-react';
 import { getAudioEngine, OutputRoutingMode } from './lib/AudioEngine';
 import { initTraktorMIDI, TRAKTOR_S2_MAP, setMidiLearnTarget } from './lib/TraktorMIDI';
@@ -346,9 +346,6 @@ export default function App() {
   const [translateX, setTranslateX] = useState(0);
   const [translateY, setTranslateY] = useState(0);
   const [bgVisMode, setBgVisMode] = useState<BgVisualizerMode>('aura');
-  const [backendUrl, setBackendUrl] = useState(() => {
-    return (typeof window !== 'undefined' && localStorage.getItem('lucid_decks_backend_url')) || '';
-  });
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -835,44 +832,6 @@ export default function App() {
                           Import
                           <input type="file" className="hidden" accept=".json" onChange={handleImportMidi} onClick={(e) => { (e.target as HTMLInputElement).value = ''; }} />
                         </label>
-                      </div>
-
-                      {/* Backend Server Connection */}
-                      <div className="flex flex-col gap-2 pt-3 border-t border-white/10 shrink-0">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-[10px] font-bold tracking-widest text-[#ff5500] uppercase flex items-center gap-1.5">
-                            <Cloud className="w-3.5 h-3.5" /> SoundCloud Backend Proxy
-                          </h4>
-                          <span className={`text-[8.5px] font-mono px-1.5 py-0.5 rounded font-bold ${backendUrl ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-white/10 text-white/50'}`}>
-                            {backendUrl ? 'CUSTOM' : 'LOCAL DEFAULT'}
-                          </span>
-                        </div>
-                        <p className="text-[9px] font-mono text-white/50 leading-tight">
-                          Connect to a Node.js server to bypass browser CORS on SoundCloud. Run "npm run dev" locally or paste a hosted URL.
-                        </p>
-                        <div className="flex gap-1.5">
-                          <input 
-                            type="text" 
-                            placeholder="e.g. https://my-backend.onrender.com"
-                            value={backendUrl}
-                            onChange={(e) => {
-                              setBackendUrl(e.target.value);
-                              localStorage.setItem('lucid_decks_backend_url', e.target.value.trim());
-                            }}
-                            className="flex-1 bg-black/40 border border-white/15 rounded px-2.5 py-1 text-[10px] font-mono text-white placeholder:text-white/30 focus:border-[#ff5500] outline-hidden"
-                          />
-                          {backendUrl && (
-                            <button 
-                              onClick={() => {
-                                setBackendUrl('');
-                                localStorage.removeItem('lucid_decks_backend_url');
-                              }}
-                              className="text-[9px] font-mono px-2 py-1 bg-white/10 hover:bg-white/20 rounded text-white/60 hover:text-white border border-white/10"
-                            >
-                              Reset
-                            </button>
-                          )}
-                        </div>
                       </div>
                     </div>
                   </div>
