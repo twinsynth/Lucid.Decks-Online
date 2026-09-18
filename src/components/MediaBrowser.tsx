@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { 
   FolderOpen, FileAudio, Trash2, Search, HardDrive, Sparkles, ChevronDown, 
-  Cloud, Loader2, Play, Download, Music, Flame, ExternalLink, RefreshCw 
+  Cloud, Loader2, Play, Download, Music, Flame, ExternalLink, RefreshCw, AlertTriangle 
 } from 'lucide-react';
 import { 
   saveTrackToDB, 
@@ -121,6 +121,22 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
     onLoadToDeck(deck, file, track.id, track.hotCues);
   };
 
+  // Safe API Fetcher to prevent "Unexpected token '<', <!DOCTYPE... is not valid JSON" on static hosts
+  const fetchSafeJson = async (url: string) => {
+    const res = await fetch(url);
+    const contentType = res.headers.get('content-type') || '';
+    if (!res.ok || !contentType.includes('application/json')) {
+      if (res.status === 404 || contentType.includes('text/html')) {
+        throw new Error(
+          'SoundCloud live searching requires the Lucid Decks Node backend server. If you are on GitHub Pages or a static host, please run "npm run dev" locally or switch to "My Crate" for local files.'
+        );
+      }
+      const text = await res.text();
+      throw new Error(`Server returned error (${res.status}): ${text.slice(0, 100)}`);
+    }
+    return res.json();
+  };
+
   // SoundCloud API Handlers
   const handleSoundCloudSearch = async (queryText?: string) => {
     const q = (queryText !== undefined ? queryText : scQuery).trim();
@@ -132,8 +148,7 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
     try {
       if (q.startsWith('https://soundcloud.com/')) {
         // Direct track URL resolve
-        const res = await fetch(`/api/soundcloud/resolve?url=${encodeURIComponent(q)}`);
-        const data = await res.json();
+        const data = await fetchSafeJson(`/api/soundcloud/resolve?url=${encodeURIComponent(q)}`);
         if (data.success && data.track) {
           setScTracks([data.track]);
         } else {
@@ -141,8 +156,7 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
         }
       } else {
         // Search query
-        const res = await fetch(`/api/soundcloud/search?q=${encodeURIComponent(q)}&limit=24`);
-        const data = await res.json();
+        const data = await fetchSafeJson(`/api/soundcloud/search?q=${encodeURIComponent(q)}&limit=24`);
         if (data.success && Array.isArray(data.tracks)) {
           setScTracks(data.tracks);
         } else {
@@ -161,7 +175,12 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
     try {
       const streamUrl = `/api/soundcloud/stream?transcodingUrl=${encodeURIComponent(track.streamTranscodingUrl)}&trackAuth=${encodeURIComponent(track.trackAuth || '')}`;
       const res = await fetch(streamUrl);
-      if (!res.ok) throw new Error(`Stream request failed (${res.status})`);
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || contentType.includes('text/html')) {
+        throw new Error(
+          'Live streaming requires the backend server. Start the local server with "npm run dev" to stream.'
+        );
+      }
       const blob = await res.blob();
       const safeName = `${track.artist} - ${track.title}`.replace(/[\/\\?%*:|"<>]/g, '_');
       const file = new File([blob], `${safeName}.mp3`, { type: 'audio/mpeg' });
@@ -179,7 +198,12 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
     try {
       const streamUrl = `/api/soundcloud/stream?transcodingUrl=${encodeURIComponent(track.streamTranscodingUrl)}&trackAuth=${encodeURIComponent(track.trackAuth || '')}`;
       const res = await fetch(streamUrl);
-      if (!res.ok) throw new Error(`Stream download failed (${res.status})`);
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || contentType.includes('text/html')) {
+        throw new Error(
+          'Track caching requires the backend server. Start the local server with "npm run dev" to cache tracks.'
+        );
+      }
       const blob = await res.blob();
       const safeName = `${track.artist} - ${track.title}`.replace(/[\/\\?%*:|"<>]/g, '_');
       const file = new File([blob], `${safeName}.mp3`, { type: 'audio/mpeg' });
@@ -520,14 +544,25 @@ export function MediaBrowser({ onLoadToDeck, onClose }: MediaBrowserProps) {
               </span>
             </div>
           ) : scError ? (
-            <div className="h-full flex flex-col items-center justify-center text-red-400 gap-2">
-              <span className="text-xs font-mono">{scError}</span>
-              <button 
-                onClick={() => handleSoundCloudSearch()}
-                className="text-[10px] uppercase font-mono px-3 py-1 bg-white/10 hover:bg-white/20 rounded border border-white/20 text-white"
-              >
-                Retry Search
-              </button>
+            <div className="h-full flex flex-col items-center justify-center text-red-400 gap-2.5 p-4 text-center">
+              <div className="p-2 rounded-full bg-amber-500/10 border border-amber-500/30">
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+              </div>
+              <span className="text-xs font-mono text-white/90 max-w-md leading-relaxed">{scError}</span>
+              <div className="flex gap-2 mt-1">
+                <button 
+                  onClick={() => handleSoundCloudSearch()}
+                  className="text-[10px] uppercase font-mono px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-md border border-white/20 text-white transition-colors"
+                >
+                  Retry Search
+                </button>
+                <button 
+                  onClick={() => setActiveTab('local')}
+                  className="text-[10px] uppercase font-mono px-3 py-1.5 bg-[#00f2ff]/20 hover:bg-[#00f2ff]/30 text-[#00f2ff] rounded-md border border-[#00f2ff]/40 transition-colors font-bold"
+                >
+                  Switch to My Crate (Local Files)
+                </button>
+              </div>
             </div>
           ) : scTracks.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center opacity-40 gap-2">

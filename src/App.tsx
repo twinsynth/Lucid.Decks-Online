@@ -260,22 +260,24 @@ const OverlayedWaveforms = ({
       <div className="absolute top-0 bottom-0 w-[2px] z-10 pointer-events-none" style={{ left: `${progressA}%`, backgroundColor: colorA, boxShadow: `0 0 10px ${colorA}` }} />
       <div className="absolute top-0 bottom-0 w-[2px] z-10 pointer-events-none" style={{ left: `${progressB}%`, backgroundColor: colorB, boxShadow: `0 0 10px ${colorB}` }} />
 
-      {/* Labels */}
+      {/* Labels with backdrop to prevent waveform peak clipping */}
       <div 
-        className={`absolute left-2 z-30 font-mono font-bold transition-all truncate max-w-[45%] pointer-events-none ${
-          isCompact ? 'top-0.5 text-[8px] leading-tight' : 'top-1 text-[10px]'
+        className={`absolute left-2 z-30 font-mono font-bold transition-all truncate max-w-[48%] pointer-events-none bg-black/80 px-2 py-0.5 rounded border border-white/10 backdrop-blur-xs flex items-center gap-1.5 shadow-sm ${
+          isCompact ? 'top-1 text-[8px]' : 'top-1.5 text-[9.5px]'
         }`} 
-        style={{ color: colorA, opacity: activeDeck === 'A' ? 1 : 0.6 }}
+        style={{ color: colorA, opacity: activeDeck === 'A' ? 1 : 0.75 }}
       >
-        DECK A {fileA ? `• ${fileA.name}` : ''}
+        <span className="font-extrabold shrink-0">DECK A</span>
+        <span className="truncate opacity-80">{fileA ? `• ${fileA.name}` : ''}</span>
       </div>
       <div 
-        className={`absolute left-2 z-30 font-mono font-bold transition-all truncate max-w-[45%] pointer-events-none ${
-          isCompact ? 'bottom-0.5 text-[8px] leading-tight' : 'bottom-1 text-[10px]'
+        className={`absolute left-2 z-30 font-mono font-bold transition-all truncate max-w-[48%] pointer-events-none bg-black/80 px-2 py-0.5 rounded border border-white/10 backdrop-blur-xs flex items-center gap-1.5 shadow-sm ${
+          isCompact ? 'bottom-1 text-[8px]' : 'bottom-1.5 text-[9.5px]'
         }`} 
-        style={{ color: colorB, opacity: activeDeck === 'B' ? 1 : 0.6 }}
+        style={{ color: colorB, opacity: activeDeck === 'B' ? 1 : 0.75 }}
       >
-        DECK B {fileB ? `• ${fileB.name}` : ''}
+        <span className="font-extrabold shrink-0">DECK B</span>
+        <span className="truncate opacity-80">{fileB ? `• ${fileB.name}` : ''}</span>
       </div>
 
       {/* Dual Phase Strip indicator in compact mode */}
@@ -853,8 +855,8 @@ export default function App() {
           />
           <div className="w-full h-full flex items-center justify-center transition-transform duration-200 z-10">
           <div 
-            className={`flex gap-3 md:gap-4 max-w-7xl mx-auto w-full h-full items-center justify-center transition-all duration-300 ${
-              libraryVisible ? 'p-2 md:p-3' : 'p-3 md:p-6'
+            className={`flex gap-2 sm:gap-3 md:gap-4 max-w-7xl mx-auto w-full h-full items-center justify-center transition-all duration-300 min-w-0 ${
+              libraryVisible ? 'p-1.5 sm:p-2 md:p-3' : 'p-2 sm:p-3 md:p-5'
             }`}
             style={{ 
               transform: `scale(${scale}) rotate(${rotation}deg) translate(${translateX}px, ${translateY}px)`
@@ -879,8 +881,8 @@ export default function App() {
               isCompact={libraryVisible}
             />
 
-            {/* Mixer */}
-            <div className={`w-72 sm:w-80 md:w-84 shrink-0 bg-neutral-900/50 rounded-2xl border border-white/5 flex flex-col justify-between items-center h-full transition-all duration-300 ${libraryVisible ? 'p-3' : 'p-4 md:p-5'}`}>
+            {/* Mixer - Responsive width to prevent clipping on narrower displays */}
+            <div className={`w-64 sm:w-72 md:w-76 lg:w-80 xl:w-84 shrink-0 bg-neutral-900/50 rounded-2xl border border-white/5 flex flex-col justify-between items-center h-full transition-all duration-300 ${libraryVisible ? 'p-2.5' : 'p-3 sm:p-4 md:p-5'}`}>
               <h2 className={`text-[10px] font-bold tracking-[0.2em] opacity-50 shrink-0 ${libraryVisible ? 'mb-1.5' : 'mb-3'}`}>MIXER</h2>
               
               <div className="flex-1 flex justify-between items-stretch w-full px-2 relative min-h-0">
@@ -1366,28 +1368,28 @@ function Deck({
 
       if (availW <= 10 || availH <= 10) return;
 
-      // Adaptive gap: 8px on tight screens, up to 20px on spacious screens
-      const targetGap = Math.round(Math.max(8, Math.min(20, availW * 0.035)));
+      // Adaptive gap: 6px on tight screens, up to 20px on spacious screens
+      const targetGap = Math.round(Math.max(6, Math.min(20, availW * 0.035)));
 
-      // Adaptive pitch fader width: 38px to 52px
-      const targetPitchWidth = Math.round(Math.max(38, Math.min(52, availW * 0.135)));
+      // Adaptive pitch fader width: 34px to 52px
+      const targetPitchWidth = Math.round(Math.max(34, Math.min(52, availW * 0.135)));
 
       // Calculate maximum jog wheel diameter without overflowing container
-      // 12px buffer preserves comfortable margin from deck border
-      const maxW = availW - targetPitchWidth - targetGap - 12;
-      const maxH = availH - 6;
+      // 16px buffer preserves comfortable margin from deck border
+      const maxW = availW - targetPitchWidth - targetGap - 16;
+      const maxH = availH - 8;
 
-      // Jog wheel diameter bounded by both available width and height (clamped 110px - 280px)
-      const jogSize = Math.round(Math.max(110, Math.min(280, Math.min(maxW, maxH))));
+      // Jog wheel diameter bounded by both available width and height (clamped 95px - 280px)
+      const jogSize = Math.round(Math.max(95, Math.min(280, Math.min(maxW, maxH))));
 
       // Pitch fader height matches jog wheel diameter for balanced CDJ aesthetics
       const pitchHeight = jogSize;
 
       // Pitch fader width scales smoothly with jog size
-      const pitchWidth = Math.round(Math.max(38, Math.min(52, Math.min(targetPitchWidth, jogSize * 0.22))));
+      const pitchWidth = Math.round(Math.max(34, Math.min(52, Math.min(targetPitchWidth, jogSize * 0.22))));
 
       // Slider track throw length fits inside pitchHeight leaving space for labels, MT button, and % readout
-      const sliderLength = Math.round(Math.max(64, Math.min(185, pitchHeight - 68)));
+      const sliderLength = Math.round(Math.max(48, Math.min(185, pitchHeight - 62)));
 
       setDims({
         jogSize,
@@ -1584,36 +1586,92 @@ function Deck({
   const currentBpm = (baseBpm * (1.0 + (pitch - 0.5) * 0.32)).toFixed(2);
 
   return (
-    <div className={`flex-1 bg-neutral-900/30 rounded-2xl border flex flex-col justify-between relative overflow-hidden h-full transition-all duration-300 ${isCompact ? 'p-3 md:p-3.5' : 'p-4 md:p-5'} ${isPlaying ? 'border-opacity-30 z-10' : 'border-white/5'}`} style={isPlaying ? { borderColor: theme, boxShadow: `0 0 100px ${theme}40, inset 0 0 60px ${theme}20` } : {}}>
+    <div className={`flex-1 min-w-0 bg-neutral-900/30 rounded-2xl border flex flex-col justify-between relative overflow-hidden h-full transition-all duration-300 ${isCompact ? 'p-2 sm:p-2.5 md:p-3' : 'p-3 sm:p-3.5 md:p-4'} ${isPlaying ? 'border-opacity-30 z-10' : 'border-white/5'}`} style={isPlaying ? { borderColor: theme, boxShadow: `0 0 100px ${theme}40, inset 0 0 60px ${theme}20` } : {}}>
       
-      {/* 1. Top Bar (Track Info & Mini Waveform) */}
-      <div className={`flex justify-between items-start shrink-0 ${isCompact ? 'mb-1.5 sm:mb-2' : 'mb-2 sm:mb-3 lg:mb-3.5'}`}>
-        <div className="flex-1 bg-black/40 border border-white/10 rounded-xl p-2 sm:p-2.5 cursor-pointer transition-colors flex flex-col gap-1.5" style={{ borderColor: isPlaying ? theme : undefined }} onClick={onLoadClick}>
-          {/* Mini Waveform with Hot Cue Markers */}
-          <div className="w-full h-8 sm:h-9 bg-black/40 border border-white/5 rounded relative overflow-hidden flex shrink-0">
-             <div className="absolute inset-0 pointer-events-none opacity-50">
+      {/* 1. Top Bar: Smart Responsive CDJ Screen with Bold Illuminated BPM & Full Mini Waveform */}
+      <div className={`w-full shrink-0 min-w-0 ${isCompact ? 'mb-1 sm:mb-1.5' : 'mb-1.5 sm:mb-2.5'}`}>
+        <div 
+          className="w-full bg-black/60 border border-white/10 rounded-xl p-2 sm:p-2.5 cursor-pointer transition-all hover:border-white/25 flex flex-col gap-1.5 shadow-lg relative overflow-hidden group" 
+          style={{ borderColor: isPlaying ? theme : undefined }} 
+          onClick={onLoadClick}
+        >
+          {/* Subtle top neon edge glow when playing */}
+          {isPlaying && (
+            <div 
+              className="absolute top-0 left-0 right-0 h-[2px] pointer-events-none"
+              style={{ backgroundColor: theme, boxShadow: `0 0 10px ${theme}` }}
+            />
+          )}
+
+          {/* Row 1: Deck Badge, Track Title, and Big Bold High-Contrast BPM Display */}
+          <div className="flex items-center justify-between gap-2 w-full min-w-0">
+            {/* Left: Deck Indicator & Keylock Status & Track Title */}
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <div 
+                className="px-2 py-0.5 rounded-md font-mono font-black text-[11px] sm:text-xs tracking-widest uppercase border flex items-center gap-1 shrink-0 shadow-sm"
+                style={{ 
+                  backgroundColor: `${theme}18`, 
+                  borderColor: `${theme}60`, 
+                  color: theme,
+                  boxShadow: `0 0 10px ${theme}25`
+                }}
+              >
+                <span>DECK {id}</span>
+                {keylock && (
+                  <span className="text-[7.5px] sm:text-[8px] bg-[#00f2ff]/30 text-[#00f2ff] px-1 py-0.2 rounded border border-[#00f2ff]/60 font-black">
+                    MT
+                  </span>
+                )}
+              </div>
+
+              {/* Track Title (Truncated with full name tooltip) */}
+              <div className="min-w-0 flex-1">
+                <div 
+                  className="font-mono text-[11px] sm:text-xs md:text-sm font-bold truncate text-white/90 group-hover:text-white transition-colors"
+                  title={file ? file.name : "Click to load track"}
+                >
+                  {file ? file.name : "CLICK TO LOAD AUDIO"}
+                </div>
+              </div>
+            </div>
+
+            {/* Right: Big Bold Illuminated CDJ BPM Readout Box (Guaranteed Never Clipped) */}
+            <div 
+              className="flex items-center gap-1.5 bg-neutral-950/95 border border-white/20 px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-lg shrink-0 shadow-inner"
+              style={isPlaying ? { borderColor: `${theme}50`, boxShadow: `0 0 10px ${theme}25` } : {}}
+            >
+              <span className="text-[9px] sm:text-[10px] font-mono font-black tracking-widest text-amber-400 uppercase select-none">
+                BPM
+              </span>
+              <span className="text-xs sm:text-sm md:text-base font-mono font-black text-white tracking-tight leading-none min-w-[48px] sm:min-w-[54px] text-right">
+                {currentBpm}
+              </span>
+            </div>
+          </div>
+
+          {/* Row 2: Visual Mini Waveform Strip with Cue Markers & Playhead */}
+          <div className="w-full h-7 sm:h-8 md:h-8.5 bg-black/80 border border-white/10 rounded-lg relative overflow-hidden flex shrink-0 shadow-inner">
+             <div className="absolute inset-0 pointer-events-none opacity-60">
                <WaveformSVG 
                  peaks={peaks} 
                  color={theme} 
                  progress={progress} 
-                 height={36} 
+                 height={34} 
                  thickness={thickness} 
                  hotCues={hotCues} 
                  duration={duration} 
                  compact={true}
                />
              </div>
-             <div className="absolute top-0 bottom-0 w-[2px] z-10 pointer-events-none" style={{ left: `${progress}%`, backgroundColor: theme, boxShadow: `0 0 10px ${theme}` }} />
-          </div>
-          <div className="flex justify-between items-center mb-0.5">
-             <div className="text-[10px] tracking-widest font-mono font-bold flex items-center gap-2" style={{ color: theme }}>
-               DECK {id}
-               {keylock && <span className="text-[8px] bg-[#00f2ff]/20 text-[#00f2ff] px-1 rounded border border-[#00f2ff]/40">MT</span>}
-             </div>
-             <div className="text-[10px] font-mono tracking-wider opacity-50">BPM <span className="text-white font-bold text-xs">{currentBpm}</span></div>
-          </div>
-          <div className="font-mono text-xs sm:text-sm truncate opacity-90">
-            {file ? file.name : "CLICK TO LOAD TRACK"}
+             {/* Playhead */}
+             <div 
+               className="absolute top-0 bottom-0 w-[2px] z-10 pointer-events-none transition-[left] duration-75" 
+               style={{ 
+                 left: `${progress}%`, 
+                 backgroundColor: theme, 
+                 boxShadow: `0 0 8px ${theme}, 0 0 3px #ffffff` 
+               }} 
+             />
           </div>
         </div>
       </div>
@@ -1720,15 +1778,15 @@ function Deck({
       </div>
 
       {/* 3. Bottom Section: Hot Cues & Transport Row sharing the exact same container & total width */}
-      <div className={`w-full max-w-[340px] md:max-w-[360px] mx-auto flex flex-col gap-2 shrink-0 ${isCompact ? 'mt-1.5 sm:mt-2' : 'mt-2 sm:mt-3 lg:mt-3.5'} pb-1`}>
+      <div className={`w-full max-w-[360px] min-w-0 mx-auto flex flex-col gap-1.5 sm:gap-2 shrink-0 ${isCompact ? 'mt-1 sm:mt-1.5' : 'mt-1.5 sm:mt-2.5'} pb-0.5`}>
         
         {/* Hot Cues Header & Row */}
-        <div className="w-full flex flex-col gap-1.5">
+        <div className="w-full flex flex-col gap-1">
           <div className="flex items-center justify-between px-1">
-            <span className="text-[9px] font-mono tracking-widest font-bold opacity-50 uppercase">HOT CUES</span>
+            <span className="text-[8.5px] sm:text-[9px] font-mono tracking-widest font-bold opacity-50 uppercase">HOT CUES</span>
             <button
               onClick={() => setDelMode(!delMode)}
-              className={`text-[8px] font-mono tracking-wider uppercase px-2 py-0.5 rounded border transition-all ${
+              className={`text-[7.5px] sm:text-[8px] font-mono tracking-wider uppercase px-2 py-0.5 rounded border transition-all ${
                 delMode 
                   ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse font-bold' 
                   : 'border-white/10 text-white/30 hover:text-white bg-black/20'
@@ -1740,7 +1798,7 @@ function Deck({
           </div>
 
           {/* 4 Compact Performance Pads - Exactly 4 columns */}
-          <div className="grid grid-cols-4 gap-2 w-full">
+          <div className="grid grid-cols-4 gap-1.5 sm:gap-2 w-full">
             {HOT_CUE_COLORS.map((padColor, idx) => {
               const cueTime = hotCues[idx];
               const isSet = cueTime !== null && cueTime !== undefined;
@@ -1752,14 +1810,14 @@ function Deck({
                 <MidiControl key={idx} midiKey={id === 'A' ? `DECK_A_HOTCUE_${idx + 1}` : `DECK_B_HOTCUE_${idx + 1}`}>
                   <button
                     onClick={() => onHotCueClick(idx, delMode)}
-                    className={`h-9 rounded-lg border flex flex-col items-center justify-center relative transition-all active:scale-95 group select-none ${
+                    className={`${isCompact ? 'h-7.5 sm:h-8' : 'h-8 sm:h-9'} rounded-lg border flex flex-col items-center justify-center relative transition-all active:scale-95 group select-none ${
                       isSet 
                         ? 'bg-black/60 shadow-md' 
                         : 'bg-black/30 border-white/10 hover:border-white/30 text-white/30 hover:text-white/70'
                     }`}
                     style={isSet ? {
                       borderColor: padColor,
-                      boxShadow: `0 0 10px ${padColor}40, inset 0 0 6px ${padColor}20`,
+                      boxShadow: `0 0 10px ${padColor}40`,
                       color: padColor
                     } : {}}
                     title={isSet ? `Hot Cue ${idx + 1}: ${formattedTime} (Click to jump)` : `Hot Cue ${idx + 1} Empty (Click to set)`}
@@ -1778,12 +1836,12 @@ function Deck({
         </div>
 
         {/* Transport Row - Exactly 4 columns, matching the exact width & column gaps of Hot Cues above! */}
-        <div className="grid grid-cols-4 gap-2 w-full">
+        <div className="grid grid-cols-4 gap-1.5 sm:gap-2 w-full">
           {/* SYNC */}
           <MidiControl midiKey={id === 'A' ? 'DECK_A_SYNC_BTN' : 'DECK_B_SYNC_BTN'}>
             <button 
               onClick={handleSync}
-              className="h-12 rounded-xl text-[11px] font-bold font-mono tracking-wider bg-black/40 border border-white/20 hover:border-white/60 transition-all text-white flex items-center justify-center active:scale-95 shadow-sm"
+              className={`${isCompact ? 'h-10 sm:h-11' : 'h-11 sm:h-12'} rounded-xl text-[10px] sm:text-[11px] font-bold font-mono tracking-wider bg-black/40 border border-white/20 hover:border-white/60 transition-all text-white flex items-center justify-center active:scale-95 shadow-sm`}
               title="Sync BPM with other deck"
             >
               SYNC
@@ -1794,7 +1852,7 @@ function Deck({
           <MidiControl midiKey={id === 'A' ? 'DECK_A_PLAY_BTN' : 'DECK_B_PLAY_BTN'}>
             <button 
               onClick={onPlay}
-              className="h-12 rounded-xl flex items-center justify-center border-2 transition-all hover:scale-105 active:scale-95 shadow-md"
+              className={`${isCompact ? 'h-10 sm:h-11' : 'h-11 sm:h-12'} rounded-xl flex items-center justify-center border-2 transition-all hover:scale-105 active:scale-95 shadow-md`}
               style={isPlaying ? { backgroundColor: `${theme}20`, borderColor: theme, color: theme, boxShadow: `0 0 15px ${theme}40` } : { backgroundColor: 'rgba(0,0,0,0.4)', borderColor: 'rgba(255,255,255,0.15)', color: 'white' }}
             >
               {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current translate-x-[1px]" />}
@@ -1805,9 +1863,9 @@ function Deck({
           <MidiControl midiKey={id === 'A' ? 'DECK_A_CUE_BTN' : 'DECK_B_CUE_BTN'}>
             <button 
               onClick={onCue}
-              className="h-12 rounded-xl flex items-center justify-center border-2 bg-black/40 border-white/15 hover:border-white/30 text-white transition-all active:scale-95 shadow-sm"
+              className={`${isCompact ? 'h-10 sm:h-11' : 'h-11 sm:h-12'} rounded-xl flex items-center justify-center border-2 bg-black/40 border-white/15 hover:border-white/30 text-white transition-all active:scale-95 shadow-sm`}
             >
-              <span className="font-bold text-[11px] tracking-wider">CUE</span>
+              <span className="font-bold text-[10px] sm:text-[11px] tracking-wider">CUE</span>
             </button>
           </MidiControl>
 
@@ -1815,7 +1873,7 @@ function Deck({
           <MidiControl midiKey={id === 'A' ? 'DECK_A_LOOP_BTN' : 'DECK_B_LOOP_BTN'}>
             <button 
               onClick={onLoop}
-              className={`h-12 rounded-xl flex items-center justify-center border-2 transition-all hover:scale-105 active:scale-95 shadow-sm ${isLooping ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-black/40 border-white/15 hover:border-white/30 text-white'}`}
+              className={`${isCompact ? 'h-10 sm:h-11' : 'h-11 sm:h-12'} rounded-xl flex items-center justify-center border-2 transition-all hover:scale-105 active:scale-95 shadow-sm ${isLooping ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-black/40 border-white/15 hover:border-white/30 text-white'}`}
               title="Seamless Loop"
             >
               <Repeat className="w-5 h-5" />
