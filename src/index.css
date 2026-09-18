@@ -10,6 +10,20 @@
   .font-audiowide {
     font-family: 'Audiowide', cursive, sans-serif;
   }
+  @keyframes spin-cd {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .animate-cd-turn {
+    animation: spin-cd 4s linear infinite;
+  }
+  .animate-cd-turn-fast {
+    animation: spin-cd 2s linear infinite;
+  }
 }
 
 @layer base {

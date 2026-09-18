@@ -9,6 +9,7 @@ import { updateTrackHotCuesInDB } from './lib/LibraryDB';
 import { MediaBrowser } from './components/MediaBrowser';
 import { SetupGuideModal } from './components/SetupGuideModal';
 import { BackgroundVisualizer, BgVisualizerMode } from './components/BackgroundVisualizer';
+import { AnimatedCD } from './components/AnimatedCD';
 
 export const MidiLearnContext = React.createContext<{
   learnMode: boolean;
@@ -568,7 +569,7 @@ export default function App() {
       {/* Header */}
       <header className="h-14 border-b border-white/10 bg-black/40 flex items-center justify-between px-6 shrink-0 relative z-50">
         <div className="flex items-center gap-3">
-          <Music className="w-5 h-5 text-white/50" />
+          <AnimatedCD isPlaying={deckAPlay || deckBPlay} />
           <h1 
             className="tracking-wider select-none flex items-baseline font-audiowide text-base sm:text-lg font-normal leading-none"
             style={{ fontFamily: "'Audiowide', cursive, sans-serif" }}
