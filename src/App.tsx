@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { 
   Play, Pause, Repeat, 
-  Music, FileAudio, Wrench, RefreshCw, ZoomIn, Move, Headphones, Volume2, Split, FolderOpen
+  Music, FileAudio, Wrench, RefreshCw, ZoomIn, Move, Headphones, Volume2, Split, FolderOpen, HelpCircle
 } from 'lucide-react';
 import { getAudioEngine, OutputRoutingMode } from './lib/AudioEngine';
 import { initTraktorMIDI, TRAKTOR_S2_MAP, setMidiLearnTarget } from './lib/TraktorMIDI';
 import { updateTrackHotCuesInDB } from './lib/LibraryDB';
 import { MediaBrowser } from './components/MediaBrowser';
-import { AILab } from './components/AILab';
+import { SetupGuideModal } from './components/SetupGuideModal';
 import { BackgroundVisualizer, BgVisualizerMode } from './components/BackgroundVisualizer';
 
 export const MidiLearnContext = React.createContext<{
@@ -336,7 +336,7 @@ export default function App() {
 
   // Tools / Settings State
   const [toolsOpen, setToolsOpen] = useState(false);
-  const [aiLabOpen, setAiLabOpen] = useState(false);
+  const [setupGuideOpen, setSetupGuideOpen] = useState(false);
   const [scale, setScale] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [translateX, setTranslateX] = useState(0);
@@ -349,6 +349,8 @@ export default function App() {
       if (e.code === 'Space') {
         e.preventDefault();
         setLibraryVisible(v => !v);
+      } else if (e.key === '?') {
+        setSetupGuideOpen(v => !v);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -573,18 +575,6 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Output Mode Indicator Badge */}
-          <div 
-            onClick={() => setToolsOpen(true)}
-            className="flex items-center gap-1.5 text-[10px] font-mono px-2.5 py-1 rounded bg-white/5 border border-white/10 hover:border-white/30 cursor-pointer transition-colors"
-            title="Click to configure audio output in Settings"
-          >
-            <Headphones className="w-3 h-3 text-amber-400" />
-            <span className="text-white/60 uppercase">
-              {outputMode === 'split-lr' ? 'SPLIT L/R' : outputMode === '4-channel' ? '4-CH AUDIO' : 'STEREO'}
-            </span>
-          </div>
-
           <label className="flex items-center gap-2 text-xs font-mono cursor-pointer border border-white/20 px-3 py-1.5 rounded transition-colors hover:bg-white/10">
             <input 
               type="checkbox" 
@@ -612,7 +602,7 @@ export default function App() {
             </button>
           )}
 
-          <div className="relative ml-4 flex gap-4">
+          <div className="relative ml-2 flex items-center gap-2.5">
             <button 
               onClick={() => setLibraryVisible(!libraryVisible)}
               className={`flex items-center gap-1.5 text-xs font-mono uppercase px-3 py-1.5 rounded border transition-colors ${
@@ -626,19 +616,26 @@ export default function App() {
               <span>Library</span>
               <span className="text-[9px] opacity-40 font-mono hidden lg:inline">[Space]</span>
             </button>
-            <button 
-              onClick={() => setAiLabOpen(!aiLabOpen)}
-              className={`flex items-center gap-2 text-xs font-mono uppercase px-3 py-1.5 rounded border transition-colors ${aiLabOpen ? 'bg-[#00f2ff]/20 border-[#00f2ff] text-[#00f2ff]' : 'border-white/20 hover:border-[#00f2ff]/50 text-[#00f2ff]/70 hover:text-[#00f2ff]'}`}
-            >
-              <Music className="w-4 h-4" />
-              AI Lab
-            </button>
+
             <button 
               onClick={() => setToolsOpen(!toolsOpen)}
               className={`flex items-center gap-2 text-xs font-mono uppercase px-3 py-1.5 rounded border transition-colors ${toolsOpen ? 'bg-white/10 border-white text-white' : 'border-white/20 hover:border-white/50 text-white/70 hover:text-white'}`}
             >
               <Wrench className="w-4 h-4" />
               Settings
+            </button>
+
+            {/* DJ Hardware & Quickstart Setup Guide (?) */}
+            <button 
+              onClick={() => setSetupGuideOpen(true)}
+              className={`flex items-center justify-center w-8 h-8 rounded border transition-colors ${
+                setupGuideOpen 
+                  ? 'bg-[#00f2ff]/20 border-[#00f2ff] text-[#00f2ff] shadow-[0_0_10px_rgba(0,242,255,0.4)]' 
+                  : 'border-white/20 hover:border-white/50 text-white/70 hover:text-white bg-white/5'
+              }`}
+              title="DJ Hardware & Quickstart Setup Guide (?)"
+            >
+              <HelpCircle className="w-4 h-4 text-[#00f2ff]" />
             </button>
 
             {/* Settings Modal */}
@@ -1064,12 +1061,11 @@ export default function App() {
         <MediaBrowser onLoadToDeck={handleLoadDeck} onClose={() => setLibraryVisible(false)} />
       </div>
 
-      <AILab 
-        isOpen={aiLabOpen} 
-        onClose={() => setAiLabOpen(false)} 
-        onAddTrack={(file) => {
-          window.dispatchEvent(new CustomEvent('dj-add-file', { detail: { file } }));
-        }} 
+      {/* Hardware & Quickstart Setup Guide Modal */}
+      <SetupGuideModal 
+        isOpen={setupGuideOpen} 
+        onClose={() => setSetupGuideOpen(false)} 
+        onOpenSettings={() => { setSetupGuideOpen(false); setToolsOpen(true); }}
       />
 
       {/* Hidden File Inputs */}
