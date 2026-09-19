@@ -10,6 +10,7 @@ import { MediaBrowser } from './components/MediaBrowser';
 import { SetupGuideModal } from './components/SetupGuideModal';
 import { BackgroundVisualizer, BgVisualizerMode } from './components/BackgroundVisualizer';
 import { AnimatedCD } from './components/AnimatedCD';
+import { ZoomedWaveform } from './components/ZoomedWaveform';
 
 export const MidiLearnContext = React.createContext<{
   learnMode: boolean;
@@ -465,16 +466,26 @@ export default function App() {
     const engine = getAudioEngine();
     engine.resume();
     const target = deck === 'A' ? engine.deckA : engine.deckB;
-    if (target.isPlaying) target.pause();
-    else target.play();
+    const res = target.handlePlayToggle();
+    if (deck === 'A') setDeckAPlay(res.isPlaying);
+    else setDeckBPlay(res.isPlaying);
   };
 
-  const toggleCue = (deck: 'A' | 'B') => {
+  const handleCueDown = (deck: 'A' | 'B') => {
     const engine = getAudioEngine();
     engine.resume();
     const target = deck === 'A' ? engine.deckA : engine.deckB;
-    if (!target.isPlaying) target.setCuePoint();
-    else target.jumpToCue();
+    const res = target.handleCueDown();
+    if (deck === 'A') setDeckAPlay(res.isPlaying);
+    else setDeckBPlay(res.isPlaying);
+  };
+
+  const handleCueUp = (deck: 'A' | 'B') => {
+    const engine = getAudioEngine();
+    const target = deck === 'A' ? engine.deckA : engine.deckB;
+    const res = target.handleCueUp();
+    if (deck === 'A') setDeckAPlay(res.isPlaying);
+    else setDeckBPlay(res.isPlaying);
   };
 
   const toggleLoop = (deck: 'A' | 'B') => {
@@ -874,7 +885,8 @@ export default function App() {
               hotCues={deckAHotCues}
               onLoadClick={() => fileInputARef.current?.click()}
               onPlay={() => togglePlay('A')}
-              onCue={() => toggleCue('A')}
+              onCueDown={() => handleCueDown('A')}
+              onCueUp={() => handleCueUp('A')}
               onLoop={() => toggleLoop('A')}
               onKeylock={() => toggleKeylock('A')}
               onHotCueClick={(idx: number, isDel: boolean) => handleHotCueClick('A', idx, isDel)}
@@ -1044,7 +1056,8 @@ export default function App() {
               hotCues={deckBHotCues}
               onLoadClick={() => fileInputBRef.current?.click()}
               onPlay={() => togglePlay('B')}
-              onCue={() => toggleCue('B')}
+              onCueDown={() => handleCueDown('B')}
+              onCueUp={() => handleCueUp('B')}
               onLoop={() => toggleLoop('B')}
               onKeylock={() => toggleKeylock('B')}
               onHotCueClick={(idx: number, isDel: boolean) => handleHotCueClick('B', idx, isDel)}
@@ -1330,12 +1343,16 @@ function DualChannelVuMeter({
 
 function Deck({ 
   id, theme, file, isPlaying, isLooping, keylock, hotCues,
-  onLoadClick, onPlay, onCue, onLoop, onKeylock, onHotCueClick, thickness,
+  onLoadClick, onPlay, onCueDown, onCueUp, onLoop, onKeylock, onHotCueClick, thickness,
   isCompact = false
 }: any) {
   const [pitch, setPitch] = useState(0.5);
   const [progress, setProgress] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [cuePoint, setCuePoint] = useState(0);
+  const [firstBeatOffset, setFirstBeatOffset] = useState(0);
   const [peaks, setPeaks] = useState<number[]>([]);
+  const [detailedPeaks, setDetailedPeaks] = useState<Float32Array>(new Float32Array(0));
   const [rotation, setRotation] = useState(0);
   const [baseBpm, setBaseBpm] = useState(120);
   const [delMode, setDelMode] = useState(false);
@@ -1420,6 +1437,9 @@ function Deck({
     const interval = setInterval(() => {
       const dur = target.duration;
       setDuration(dur);
+      setCurrentTime(target.currentTime);
+      setCuePoint(target.cuePoint);
+      setFirstBeatOffset(target.firstBeatOffset);
       if (dur > 0) {
         setProgress((target.currentTime / dur) * 100);
         if (!isDragging.current) {
@@ -1427,10 +1447,11 @@ function Deck({
         }
       }
       if (target.peaks !== peaks) setPeaks([...target.peaks]);
+      if (target.detailedPeaks !== detailedPeaks) setDetailedPeaks(target.detailedPeaks);
       if (target.baseBpm !== baseBpm) setBaseBpm(target.baseBpm);
     }, 40);
     return () => clearInterval(interval);
-  }, [id, peaks, baseBpm]);
+  }, [id, peaks, baseBpm, detailedPeaks]);
 
   useEffect(() => {
     const handleMidiUpdate = (e: any) => {
@@ -1521,10 +1542,48 @@ function Deck({
       const otherRate = other.playbackRate || 1.0; 
       const otherCurrentBpm = other.baseBpm * otherRate;
       
-      const targetRate = otherCurrentBpm / target.baseBpm;
-      let normalizedPitch = (targetRate - 1.0) / 0.32;
+      // 1. Intelligent Tempo Sync (Handle 1x, 0.5x, 2x for half-time / double-time matching)
+      const ratio1x = otherCurrentBpm / target.baseBpm;
+      const ratioHalf = (otherCurrentBpm / 2) / target.baseBpm;
+      const ratioDouble = (otherCurrentBpm * 2) / target.baseBpm;
+      
+      // Pick ratio closest to 1.0 (un-pitched standard rate)
+      const candidates = [ratio1x, ratioHalf, ratioDouble];
+      let bestRate = ratio1x;
+      let minDiff = Math.abs(ratio1x - 1.0);
+      for (const r of candidates) {
+        const diff = Math.abs(r - 1.0);
+        if (diff < minDiff) {
+          minDiff = diff;
+          bestRate = r;
+        }
+      }
+
+      // Convert bestRate to slider pitch [0, 1] (±16% range, where 1.0 rate = 0.5 pitch)
+      let normalizedPitch = (bestRate - 1.0) / 0.32;
       normalizedPitch = Math.max(-0.5, Math.min(0.5, normalizedPitch));
       applyPitch(normalizedPitch + 0.5);
+
+      // 2. Phase-Locked Beat Sync (Align Downbeats & Kicks)
+      if (other.isPlaying) {
+        const masterPeriod = 60.0 / otherCurrentBpm;
+        const targetEffectiveBpm = target.baseBpm * bestRate;
+        const targetPeriod = 60.0 / targetEffectiveBpm;
+
+        // Current phase in [0, period)
+        const masterPhase = ((other.currentTime - other.firstBeatOffset) % masterPeriod + masterPeriod) % masterPeriod;
+        const targetPhase = ((target.currentTime - target.firstBeatOffset) % targetPeriod + targetPeriod) % targetPeriod;
+
+        // Normalized phase error in [-0.5, 0.5]
+        let phaseDiff = (masterPhase / masterPeriod) - (targetPhase / targetPeriod);
+        if (phaseDiff > 0.5) phaseDiff -= 1.0;
+        if (phaseDiff < -0.5) phaseDiff += 1.0;
+
+        const timeNudge = phaseDiff * targetPeriod;
+        const newTime = Math.max(0, Math.min(target.duration, target.currentTime + timeNudge));
+        target.seek(newTime);
+        setCurrentTime(newTime);
+      }
     }
   };
 
@@ -1649,30 +1708,27 @@ function Deck({
             </div>
           </div>
 
-          {/* Row 2: Visual Mini Waveform Strip with Cue Markers & Playhead */}
-          <div className="w-full h-7 sm:h-8 md:h-8.5 bg-black/80 border border-white/10 rounded-lg relative overflow-hidden flex shrink-0 shadow-inner">
-             <div className="absolute inset-0 pointer-events-none opacity-60">
-               <WaveformSVG 
-                 peaks={peaks} 
-                 color={theme} 
-                 progress={progress} 
-                 height={34} 
-                 thickness={thickness} 
-                 hotCues={hotCues} 
-                 duration={duration} 
-                 compact={true}
-               />
-             </div>
-             {/* Playhead */}
-             <div 
-               className="absolute top-0 bottom-0 w-[2px] z-10 pointer-events-none transition-[left] duration-75" 
-               style={{ 
-                 left: `${progress}%`, 
-                 backgroundColor: theme, 
-                 boxShadow: `0 0 8px ${theme}, 0 0 3px #ffffff` 
-               }} 
-             />
-          </div>
+          {/* Row 2: Zoomed Scrolling & Scrubbable CDJ Waveform */}
+          <ZoomedWaveform 
+            currentTime={currentTime}
+            duration={duration}
+            detailedPeaks={detailedPeaks}
+            color={theme}
+            bpm={baseBpm}
+            firstBeatOffset={firstBeatOffset}
+            hotCues={hotCues}
+            cuePoint={cuePoint}
+            onSeek={(t) => {
+              const target = id === 'A' ? getAudioEngine().deckA : getAudioEngine().deckB;
+              target.seek(t);
+              setCurrentTime(t);
+            }}
+            onHotCueClick={(idx) => {
+              const target = id === 'A' ? getAudioEngine().deckA : getAudioEngine().deckB;
+              target.jumpToHotCue(idx);
+            }}
+            height={isCompact ? 30 : 36}
+          />
         </div>
       </div>
 
@@ -1862,8 +1918,23 @@ function Deck({
           {/* CUE */}
           <MidiControl midiKey={id === 'A' ? 'DECK_A_CUE_BTN' : 'DECK_B_CUE_BTN'}>
             <button 
-              onClick={onCue}
-              className={`${isCompact ? 'h-10 sm:h-11' : 'h-11 sm:h-12'} rounded-xl flex items-center justify-center border-2 bg-black/40 border-white/15 hover:border-white/30 text-white transition-all active:scale-95 shadow-sm`}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                onCueDown();
+              }}
+              onPointerUp={(e) => {
+                e.preventDefault();
+                onCueUp();
+              }}
+              onPointerLeave={() => {
+                onCueUp();
+              }}
+              className={`${isCompact ? 'h-10 sm:h-11' : 'h-11 sm:h-12'} rounded-xl flex items-center justify-center border-2 transition-all active:scale-95 shadow-sm select-none ${
+                !isPlaying && Math.abs(currentTime - cuePoint) < 0.08
+                  ? 'bg-amber-400/20 border-amber-400 text-amber-300 shadow-[0_0_15px_rgba(251,191,36,0.4)] animate-pulse'
+                  : 'bg-black/40 border-white/15 hover:border-white/30 text-white'
+              }`}
+              title="CUE: Hold to preview, release to return. Slap to beat mash. Hit PLAY while holding to latch."
             >
               <span className="font-bold text-[10px] sm:text-[11px] tracking-wider">CUE</span>
             </button>

@@ -164,24 +164,11 @@ function onMidiMessage(event: any) {
       if (isPress) window.dispatchEvent(new CustomEvent('dj-sync', { detail: { deck: 'A' } }));
       break;
     case 'DECK_A_PLAY_BTN':
-      if (isPress) {
-        if (engine.deckA.isPlaying) engine.deckA.pause();
-        else engine.deckA.play();
-      }
+      if (isPress) engine.deckA.handlePlayToggle();
       break;
     case 'DECK_A_CUE_BTN':
-      if (isPress) {
-        if (!engine.deckA.isPlaying) {
-          engine.deckA.setCuePoint();
-        } else {
-          engine.deckA.jumpToCue();
-        }
-      } else if (isRelease) {
-        if (engine.deckA.isPlaying) {
-          engine.deckA.pause();
-          engine.deckA.jumpToCue();
-        }
-      }
+      if (isPress) engine.deckA.handleCueDown();
+      else if (isRelease) engine.deckA.handleCueUp();
       break;
     case 'DECK_A_LOOP_BTN':
       if (isPress) engine.deckA.toggleLoop();
@@ -246,24 +233,11 @@ function onMidiMessage(event: any) {
       if (isPress) window.dispatchEvent(new CustomEvent('dj-sync', { detail: { deck: 'B' } }));
       break;
     case 'DECK_B_PLAY_BTN':
-      if (isPress) {
-        if (engine.deckB.isPlaying) engine.deckB.pause();
-        else engine.deckB.play();
-      }
+      if (isPress) engine.deckB.handlePlayToggle();
       break;
     case 'DECK_B_CUE_BTN':
-      if (isPress) {
-        if (!engine.deckB.isPlaying) {
-          engine.deckB.setCuePoint();
-        } else {
-          engine.deckB.jumpToCue();
-        }
-      } else if (isRelease) {
-        if (engine.deckB.isPlaying) {
-          engine.deckB.pause();
-          engine.deckB.jumpToCue();
-        }
-      }
+      if (isPress) engine.deckB.handleCueDown();
+      else if (isRelease) engine.deckB.handleCueUp();
       break;
     case 'DECK_B_LOOP_BTN':
       if (isPress) engine.deckB.toggleLoop();

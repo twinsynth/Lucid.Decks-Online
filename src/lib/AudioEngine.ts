@@ -1,4 +1,5 @@
 import { registerSoundTouchWorklet } from './SoundTouchWorklet';
+import { analyzeAudioBuffer } from './BeatDetector';
 
 export type OutputRoutingMode = 'stereo-sum' | 'split-lr' | '4-channel';
 
@@ -35,6 +36,8 @@ export class Deck {
   
   // Cue & Loop State
   cuePoint: number = 0;
+  isCuePreviewing: boolean = false;
+  cueLatched: boolean = false;
   hotCues: (number | null)[] = [null, null, null, null]; // 4 colored performance pads
   loopEnabled: boolean = false;
   loopStart: number = 0;
@@ -48,8 +51,10 @@ export class Deck {
   private _duration: number = 0;
 
   peaks: number[] = [];
+  detailedPeaks: Float32Array = new Float32Array(0);
   durationVal: number = 0;
   baseBpm: number = 120;
+  firstBeatOffset: number = 0;
   trackId: string | null = null;
 
   constructor(context: AudioContext, masterOut: AudioNode, cueBus: GainNode) {
@@ -169,69 +174,13 @@ export class Deck {
         this.useWorklet = false;
       }
 
-      // Generate Waveform Peaks
-      const channelData = this.audioBuffer.getChannelData(0);
-      const numPeaks = 1000;
-      const step = Math.ceil(channelData.length / numPeaks);
-      
-      const tempPeaks = [];
-      let maxPeak = 0;
-      for (let i = 0; i < numPeaks; i++) {
-        let min = 1.0;
-        let max = -1.0;
-        for (let j = 0; j < step; j++) {
-          const idx = (i * step) + j;
-          if (idx < channelData.length) {
-            const datum = channelData[idx];
-            if (datum < min) min = datum;
-            if (datum > max) max = datum;
-          }
-        }
-        const peak = Math.max(Math.abs(min), Math.abs(max));
-        if (peak > maxPeak) maxPeak = peak;
-        tempPeaks.push(peak);
-      }
-      this.peaks = tempPeaks.map(p => maxPeak > 0 ? p / maxPeak : 0);
-
-      // BPM Detection
-      const sampleRate = this.audioBuffer.sampleRate;
-      const blockSize = Math.floor(sampleRate * 0.01);
-      const blocks = [];
-      for (let i = 0; i < channelData.length; i += blockSize) {
-        let sum = 0;
-        for (let j = 0; j < blockSize && i + j < channelData.length; j++) {
-          sum += Math.abs(channelData[i + j]);
-        }
-        blocks.push(sum);
-      }
-      const sorted = [...blocks].sort((a,b) => b-a);
-      const threshold = sorted[Math.floor(sorted.length * 0.05)] || 0.1;
-      const detectedPeaks = [];
-      for (let i = 0; i < blocks.length; i++) {
-        if (blocks[i] > threshold) {
-          detectedPeaks.push(i * blockSize);
-          i += Math.floor(sampleRate * 0.2 / blockSize);
-        }
-      }
-      const intervals: Record<number, number> = {};
-      for (let i = 0; i < detectedPeaks.length; i++) {
-        for (let j = 1; j < 5 && i + j < detectedPeaks.length; j++) {
-          const interval = detectedPeaks[i+j] - detectedPeaks[i];
-          const bpm = Math.round(60 / (interval / sampleRate));
-          if (bpm >= 70 && bpm <= 180) {
-            intervals[bpm] = (intervals[bpm] || 0) + 1;
-          }
-        }
-      }
-      let maxCount = 0;
-      let detectedBPM = 120;
-      for (const bpm in intervals) {
-        if (intervals[bpm] > maxCount) {
-          maxCount = intervals[bpm];
-          detectedBPM = parseInt(bpm);
-        }
-      }
-      this.baseBpm = detectedBPM;
+      // High-accuracy Beat, BPM, and Waveform Analysis
+      const analysis = analyzeAudioBuffer(this.audioBuffer);
+      this.peaks = analysis.overviewPeaks;
+      this.detailedPeaks = analysis.detailedPeaks;
+      this.baseBpm = analysis.bpm;
+      this.firstBeatOffset = analysis.firstBeatOffset;
+      this.cuePoint = 0; // Default to beginning of the track
 
     } catch (e) {
       console.error("Failed to decode audio into buffer:", e);
@@ -338,7 +287,7 @@ export class Deck {
     }
   }
 
-  // Standard Cue
+  // Pioneer CDJ Cue Mechanics
   setCuePoint() {
     this.cuePoint = this.currentTime;
   }
@@ -347,6 +296,74 @@ export class Deck {
     this.seek(this.cuePoint);
     if (!this.isPlaying) {
       this.play();
+    }
+  }
+
+  handleCueDown(): { isPlaying: boolean } {
+    if (this.context.state === 'suspended') {
+      this.context.resume().catch(() => {});
+    }
+    if (!this.audioBuffer) return { isPlaying: false };
+
+    if (this.isPlaying) {
+      // 1. If playing, pressing CUE immediately pauses and snaps back to cuePoint
+      this.pause();
+      this.seek(this.cuePoint);
+      this.isCuePreviewing = false;
+      this.cueLatched = false;
+      return { isPlaying: false };
+    } else {
+      // 2. If paused:
+      // If position has moved away from cuePoint, update cuePoint to current position
+      const currentPos = this.currentTime;
+      if (Math.abs(currentPos - this.cuePoint) > 0.08) {
+        this.cuePoint = currentPos;
+      }
+      this.isCuePreviewing = true;
+      this.cueLatched = false;
+      this.seek(this.cuePoint);
+      this.play();
+      return { isPlaying: true };
+    }
+  }
+
+  handleCueUp(): { isPlaying: boolean } {
+    if (this.isCuePreviewing) {
+      if (this.cueLatched) {
+        // Cue-to-Play was latched: continue regular playback
+        this.isCuePreviewing = false;
+        this.cueLatched = false;
+        return { isPlaying: true };
+      } else {
+        // Stutter / beat mash: stop playback immediately and return to cuePoint
+        this.pause();
+        this.seek(this.cuePoint);
+        this.isCuePreviewing = false;
+        this.cueLatched = false;
+        return { isPlaying: false };
+      }
+    }
+    return { isPlaying: this.isPlaying };
+  }
+
+  handlePlayToggle(): { isPlaying: boolean } {
+    if (this.context.state === 'suspended') {
+      this.context.resume().catch(() => {});
+    }
+    if (!this.audioBuffer) return { isPlaying: false };
+
+    if (this.isCuePreviewing) {
+      // "Cue Play": user pressed PLAY while holding CUE -> latch regular playback
+      this.cueLatched = true;
+      this.isCuePreviewing = false;
+      this.isPlaying = true;
+      return { isPlaying: true };
+    } else if (this.isPlaying) {
+      this.pause();
+      return { isPlaying: false };
+    } else {
+      this.play();
+      return { isPlaying: true };
     }
   }
 
