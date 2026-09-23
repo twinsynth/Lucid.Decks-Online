@@ -63,7 +63,15 @@ export function MidiControl({ midiKey, children }: { midiKey: string, children: 
     onMouseDownCapture: learnMode ? (e: any) => { 
       e.stopPropagation(); 
       e.preventDefault(); 
+      setActiveTarget(midiKey);
+      setMidiLearnTarget(midiKey);
     } : child.props.onMouseDownCapture,
+    onPointerDownCapture: learnMode ? (e: any) => { 
+      e.stopPropagation(); 
+      e.preventDefault(); 
+      setActiveTarget(midiKey);
+      setMidiLearnTarget(midiKey);
+    } : child.props.onPointerDownCapture,
   });
 }
 
@@ -957,7 +965,8 @@ export default function App() {
                             getAudioEngine().setCueVolume(v);
                           }} 
                           accent 
-                          color="#f59e0b" 
+                          color="#f59e0b"
+                          defaultValue={0.8}
                         />
                       </MidiControl>
                       <MidiControl midiKey="CUE_MIX">
@@ -969,7 +978,8 @@ export default function App() {
                             getAudioEngine().setCueMix(v);
                           }} 
                           accent 
-                          color="#f59e0b" 
+                          color="#f59e0b"
+                          defaultValue={0.0}
                         />
                       </MidiControl>
                     </div>
@@ -1960,38 +1970,69 @@ function Deck({
 
 function Knob({ 
   label, value, onChange, accent = false, color = '#ffffff',
-  className = '', style, onClickCapture, onMouseDownCapture,
+  className = '', style, onClickCapture, onMouseDownCapture, onPointerDownCapture,
+  defaultValue = 0.5,
   ...props
 }: { 
   label: string, value: number, onChange: (v: number) => void, accent?: boolean, color?: string,
-  className?: string, style?: React.CSSProperties, onClickCapture?: (e: any) => void, onMouseDownCapture?: (e: any) => void,
+  className?: string, style?: React.CSSProperties, onClickCapture?: (e: any) => void, onMouseDownCapture?: (e: any) => void, onPointerDownCapture?: (e: any) => void,
+  defaultValue?: number,
   [key: string]: any
 }) {
   const [isDragging, setIsDragging] = useState(false);
-  const dragStartY = useRef(0);
+  const isDraggingRef = useRef(false);
+  const dragStartPos = useRef({ x: 0, y: 0 });
   const startValue = useRef(value);
+  const lastTapTime = useRef(0);
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handlePointerDown = (e: React.PointerEvent) => {
+    // Double-tap or double-click resets to defaultValue (0.5 for EQ/Filter, 0 for Vol)
+    const now = performance.now();
+    if (now - lastTapTime.current < 300) {
+      onChange(defaultValue);
+      lastTapTime.current = 0;
+      return;
+    }
+    lastTapTime.current = now;
+
     e.preventDefault();
+    isDraggingRef.current = true;
     setIsDragging(true);
-    dragStartY.current = e.clientY;
+    dragStartPos.current = { x: e.clientX, y: e.clientY };
     startValue.current = value;
 
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const deltaY = dragStartY.current - moveEvent.clientY;
-      let next = startValue.current + (deltaY * 0.005);
-      next = Math.max(0, Math.min(1, next));
-      onChange(next);
-    };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+  };
 
-    const handleMouseUp = () => {
-      setIsDragging(false);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!isDraggingRef.current) return;
+    e.preventDefault();
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    // User requirement: "tap hold dragging up or right increase and vice versa"
+    const deltaY = dragStartPos.current.y - e.clientY; // Upwards movement is positive
+    const deltaX = e.clientX - dragStartPos.current.x; // Rightwards movement is positive
+    const totalDelta = deltaY + deltaX;
+
+    // 200px drag = full 1.0 sweep
+    let next = startValue.current + (totalDelta * 0.005);
+
+    // Soft magnetic snap around center detent (0.5 ± 0.015)
+    if (defaultValue === 0.5 && next >= 0.485 && next <= 0.515) {
+      next = 0.5;
+    }
+
+    next = Math.max(0, Math.min(1, next));
+    onChange(next);
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    isDraggingRef.current = false;
+    setIsDragging(false);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
   };
 
   const rotation = -135 + (value * 270);
@@ -2004,22 +2045,45 @@ function Knob({
   const isMidiLinked = props['data-midi-linked'];
   const midiTheme = props['data-midi-theme'];
 
+  // Dynamic label: Show exact relative percentage / value while dragging
+  let valueReadout = label;
+  if (isDragging) {
+    if (defaultValue === 0.5) {
+      const diff = Math.round((value - 0.5) * 100);
+      valueReadout = diff === 0 ? '0' : (diff > 0 ? `+${diff}%` : `${diff}%`);
+    } else {
+      valueReadout = `${Math.round(value * 100)}%`;
+    }
+  }
+
   return (
     <div 
-      className={`flex flex-col items-center gap-1.5 ${className}`} 
+      className={`flex flex-col items-center gap-1.5 touch-none select-none ${className}`} 
       style={style}
       onClickCapture={onClickCapture}
       onMouseDownCapture={onMouseDownCapture}
+      onPointerDownCapture={onPointerDownCapture}
     >
-      <div className={`relative group cursor-pointer w-11 h-11 shrink-0 ${isDragging ? 'scale-105' : ''} transition-transform`}
-        style={isMidiLinked ? { filter: `drop-shadow(0 0 8px ${midiTheme})` } : undefined}
-        onMouseDown={handleMouseDown}
+      <div 
+        className={`relative group cursor-pointer w-11 h-11 shrink-0 touch-none select-none transition-transform duration-100 ${
+          isDragging ? 'scale-115 drop-shadow-[0_0_12px_rgba(255,255,255,0.4)]' : 'hover:scale-105 active:scale-110'
+        }`}
+        style={{
+          touchAction: 'none',
+          ...(isMidiLinked ? { filter: `drop-shadow(0 0 8px ${midiTheme})` } : {})
+        }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         onWheel={(e) => {
           e.preventDefault();
           let next = value - (e.deltaY * 0.002);
+          if (defaultValue === 0.5 && next >= 0.485 && next <= 0.515) next = 0.5;
           next = Math.max(0, Math.min(1, next));
           onChange(next);
         }}
+        title={`${label}: Drag Up/Right to increase, Down/Left to decrease. Double-tap to center.`}
       >
         <svg className="absolute inset-0 w-full h-full transform rotate-[135deg] pointer-events-none">
           <circle
@@ -2053,8 +2117,10 @@ function Knob({
           />
         </div>
       </div>
-      <span className="text-[8px] font-bold tracking-wider opacity-50 group-hover:opacity-100 transition-opacity select-none pointer-events-none">
-        {label}
+      <span className={`text-[8px] font-bold tracking-wider transition-colors select-none pointer-events-none ${
+        isDragging ? 'text-amber-400 font-mono font-black scale-110' : 'opacity-50 group-hover:opacity-100'
+      }`}>
+        {valueReadout}
       </span>
     </div>
   );
